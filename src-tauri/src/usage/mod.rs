@@ -1,5 +1,6 @@
 pub mod claude;
 pub mod codex;
+pub mod deepseek;
 pub mod zai;
 
 use std::sync::atomic::{AtomicI64, Ordering};
@@ -17,7 +18,7 @@ pub struct ProviderSnapshot {
     pub provider: String,
     pub refreshed_at: i64,
     pub account: Option<AccountInfo>,
-    pub quotas: Vec<Quota>,
+    pub metrics: Vec<ProviderMetric>,
     pub note: Option<String>,
 }
 
@@ -29,13 +30,45 @@ pub struct AccountInfo {
     pub plan: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum ProviderMetric {
+    Quota(Quota),
+    Balance(Balance),
+}
+
+impl From<Quota> for ProviderMetric {
+    fn from(quota: Quota) -> Self {
+        Self::Quota(quota)
+    }
+}
+
+impl From<Balance> for ProviderMetric {
+    fn from(balance: Balance) -> Self {
+        Self::Balance(balance)
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct Quota {
     pub key: String,
     pub display_name: String,
     pub bucket: Bucket,
     pub progress: Progress,
+    pub urgency: Urgency,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct Balance {
+    pub key: String,
+    pub display_name: String,
+    pub amount: f64,
+    pub currency: String,
+    pub granted: Option<f64>,
+    pub topped_up: Option<f64>,
+    pub is_available: bool,
     pub urgency: Urgency,
 }
 
@@ -129,7 +162,6 @@ impl Progress {
 pub enum CountUnit {
     Tokens,
     Requests,
-    Dollars,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -173,16 +205,16 @@ pub enum SourceError {
         provider: &'static str,
         expected: &'static str,
     },
-    #[error("quota endpoint returned HTTP {status} for {provider}")]
+    #[error("provider report endpoint returned HTTP {status} for {provider}")]
     Http { provider: &'static str, status: u16 },
     #[error(
-        "{provider_label} quota endpoint is rate limited; AlexBar will retry on the next refresh"
+        "{provider_label} provider report endpoint is rate limited; AlexBar will retry on the next refresh"
     )]
     RateLimited {
         provider: &'static str,
         provider_label: &'static str,
     },
-    #[error("invalid quota payload for {provider}: {message}")]
+    #[error("invalid provider report payload for {provider}: {message}")]
     BadPayload {
         provider: &'static str,
         message: &'static str,
@@ -202,7 +234,7 @@ pub enum SourceError {
 }
 
 #[async_trait]
-pub trait QuotaSource: Send + Sync {
+pub trait ReportSource: Send + Sync {
     fn provider(&self) -> &'static str;
 
     async fn fetch(
@@ -260,24 +292,26 @@ pub fn failure_snapshot(provider: &str, message: impl Into<String>) -> ProviderS
         provider: provider.to_owned(),
         refreshed_at: now_millis(),
         account: None,
-        quotas: Vec::new(),
+        metrics: Vec::new(),
         note: Some(message.into()),
     }
 }
 
-pub fn quota_used_fraction(quota: &Quota) -> Option<f64> {
-    if quota.urgency == Urgency::Unknown {
-        None
-    } else {
-        quota.progress.used_fraction()
+pub fn quota_metric_used_fraction(metric: &ProviderMetric) -> Option<f64> {
+    match metric {
+        ProviderMetric::Quota(quota) if quota.urgency != Urgency::Unknown => {
+            quota.progress.used_fraction()
+        }
+        _ => None,
     }
 }
 
-pub fn quota_remaining_fraction(quota: &Quota) -> Option<f64> {
-    if quota.urgency == Urgency::Unknown {
-        None
-    } else {
-        quota.progress.remaining_fraction()
+pub fn quota_metric_remaining_fraction(metric: &ProviderMetric) -> Option<f64> {
+    match metric {
+        ProviderMetric::Quota(quota) if quota.urgency != Urgency::Unknown => {
+            quota.progress.remaining_fraction()
+        }
+        _ => None,
     }
 }
 
@@ -462,7 +496,7 @@ mod tests {
 
     #[test]
     fn serializes_enum_fields_as_frontend_camel_case() {
-        let quota = Quota {
+        let metric = ProviderMetric::from(Quota {
             key: "codex.short".to_owned(),
             display_name: "5 小时".to_owned(),
             bucket: Bucket::Rolling {
@@ -472,9 +506,10 @@ mod tests {
             },
             progress: Progress::ratio(56.0),
             urgency: Urgency::Calm,
-        };
+        });
 
-        let value = serde_json::to_value(quota).unwrap();
+        let value = serde_json::to_value(metric).unwrap();
+        assert_eq!(value["kind"], "quota");
         assert_eq!(value["displayName"], "5 小时");
         assert_eq!(value["bucket"]["durationMs"], 18_000_000);
         assert_eq!(value["bucket"]["resetsAt"], 1_779_444_485_000_i64);
@@ -482,5 +517,30 @@ mod tests {
         assert!(value["bucket"].get("duration_ms").is_none());
         assert!(value["bucket"].get("resets_at").is_none());
         assert!(value["progress"].get("used_percent").is_none());
+    }
+
+    #[test]
+    fn serializes_balance_metrics_for_frontend() {
+        let metric = ProviderMetric::from(Balance {
+            key: "deepseek.balance.CNY".to_owned(),
+            display_name: "CNY 余额".to_owned(),
+            amount: 110.0,
+            currency: "CNY".to_owned(),
+            granted: Some(10.0),
+            topped_up: Some(100.0),
+            is_available: true,
+            urgency: Urgency::Calm,
+        });
+
+        let value = serde_json::to_value(metric).unwrap();
+        assert_eq!(value["kind"], "balance");
+        assert_eq!(value["displayName"], "CNY 余额");
+        assert_eq!(value["amount"], 110.0);
+        assert_eq!(value["currency"], "CNY");
+        assert_eq!(value["granted"], 10.0);
+        assert_eq!(value["toppedUp"], 100.0);
+        assert_eq!(value["isAvailable"], true);
+        assert!(value.get("bucket").is_none());
+        assert!(value.get("progress").is_none());
     }
 }

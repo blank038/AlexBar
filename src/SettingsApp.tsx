@@ -15,7 +15,7 @@ const DEFAULT_SETTINGS: AppSettings = {
 };
 
 const INTERVALS: AppSettings['refreshIntervalSecs'][] = [30, 60, 120, 300];
-const VISIBLE_PROVIDER_LIMITS = [1, 2, 3, 4] as const;
+const VISIBLE_PROVIDER_LIMITS = [1, 2, 3, 4, 5, 6, 7, 8] as const;
 type SettingsCategory = 'provider' | 'system';
 
 export default function SettingsApp() {

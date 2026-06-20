@@ -4,8 +4,9 @@ use serde_json::Value;
 
 use super::{
     now_millis, number_from_keys, number_from_value, reset_millis_from_keys, urgency_from_percent,
-    AccountInfo, Bucket, CountUnit, Progress, ProviderSnapshot, Quota, QuotaSource, RateLimitGate,
-    SourceError, ABSOLUTE_RESET_KEYS, RELATIVE_RESET_AFTER_SECONDS_KEYS,
+    AccountInfo, Bucket, CountUnit, Progress, ProviderMetric, ProviderSnapshot, Quota,
+    RateLimitGate, ReportSource, SourceError, ABSOLUTE_RESET_KEYS,
+    RELATIVE_RESET_AFTER_SECONDS_KEYS,
 };
 use crate::{
     credentials::{
@@ -27,10 +28,10 @@ const SHORT_KEY: &str = "zai.tokens.5h";
 const LONG_KEY: &str = "zai.mcp";
 
 #[derive(Debug, Default)]
-pub struct ZaiQuotaSource;
+pub struct ZaiReportSource;
 
-fn quota_source(_gate: Arc<RateLimitGate>) -> Box<dyn QuotaSource> {
-    Box::<ZaiQuotaSource>::default()
+fn report_source(_gate: Arc<RateLimitGate>) -> Box<dyn ReportSource> {
+    Box::<ZaiReportSource>::default()
 }
 
 fn credential_source() -> Box<dyn CredentialSource> {
@@ -40,7 +41,7 @@ fn credential_source() -> Box<dyn CredentialSource> {
 pub const DESCRIPTOR: ProviderDescriptor = ProviderDescriptor {
     id: PROVIDER_ID,
     label: PROVIDER_LABEL,
-    quota: quota_source,
+    report: report_source,
     credentials: credential_source,
     short_quota_key: SHORT_KEY,
     long_quota_key: LONG_KEY,
@@ -58,7 +59,7 @@ struct ZaiQuotaItem {
 }
 
 #[async_trait::async_trait]
-impl QuotaSource for ZaiQuotaSource {
+impl ReportSource for ZaiReportSource {
     fn provider(&self) -> &'static str {
         PROVIDER_ID
     }
@@ -224,7 +225,7 @@ fn zai_snapshot_from_payload(
         provider: PROVIDER_ID.to_owned(),
         refreshed_at: now_millis(),
         account: account_info(account_id, email, plan),
-        quotas,
+        metrics: quotas.into_iter().map(ProviderMetric::from).collect(),
         note: None,
     })
 }
@@ -331,6 +332,13 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    fn quota_at(snapshot: &ProviderSnapshot, index: usize) -> &Quota {
+        match &snapshot.metrics[index] {
+            ProviderMetric::Quota(quota) => quota,
+            ProviderMetric::Balance(_) => panic!("expected quota metric"),
+        }
+    }
+
     #[test]
     fn descriptor_points_to_zai_quotas() {
         assert_eq!(DESCRIPTOR.id, "zai");
@@ -385,13 +393,13 @@ mod tests {
         .unwrap();
 
         assert_eq!(snapshot.provider, PROVIDER_ID);
-        assert_eq!(snapshot.quotas.len(), 3);
+        assert_eq!(snapshot.metrics.len(), 3);
         assert_eq!(
             snapshot.account.as_ref().unwrap().plan.as_deref(),
             Some("pro")
         );
 
-        let five_hour = &snapshot.quotas[0];
+        let five_hour = quota_at(&snapshot, 0);
         assert_eq!(five_hour.key, SHORT_KEY);
         assert_eq!(five_hour.display_name, "5 小时");
         assert!(matches!(
@@ -411,7 +419,7 @@ mod tests {
             }
         ));
 
-        let weekly = &snapshot.quotas[1];
+        let weekly = quota_at(&snapshot, 1);
         assert_eq!(weekly.key, "zai.tokens.7d");
         assert_eq!(weekly.display_name, "7 天");
         assert!(matches!(
@@ -429,7 +437,7 @@ mod tests {
             }
         ));
 
-        let mcp = &snapshot.quotas[2];
+        let mcp = quota_at(&snapshot, 2);
         assert_eq!(mcp.key, LONG_KEY);
         assert_eq!(mcp.display_name, "MCP");
         assert!(matches!(
@@ -464,10 +472,10 @@ mod tests {
         });
 
         let snapshot = zai_snapshot_from_payload(&payload, None, None).unwrap();
-        assert_eq!(snapshot.quotas.len(), 1);
-        assert_eq!(snapshot.quotas[0].key, SHORT_KEY);
+        assert_eq!(snapshot.metrics.len(), 1);
+        assert_eq!(quota_at(&snapshot, 0).key, SHORT_KEY);
         assert!(matches!(
-            snapshot.quotas[0].progress,
+            quota_at(&snapshot, 0).progress,
             Progress::Counted {
                 used: Some(250.0),
                 total: Some(1000.0),
@@ -477,7 +485,7 @@ mod tests {
             }
         ));
         assert!(matches!(
-            snapshot.quotas[0].bucket,
+            quota_at(&snapshot, 0).bucket,
             Bucket::Rolling {
                 resets_at: Some(1_778_976_000_000),
                 ..
@@ -505,9 +513,9 @@ mod tests {
         });
 
         let snapshot = zai_snapshot_from_payload(&payload, None, None).unwrap();
-        assert_eq!(snapshot.quotas[0].display_name, "5 小时");
+        assert_eq!(quota_at(&snapshot, 0).display_name, "5 小时");
         assert!(matches!(
-            snapshot.quotas[0].progress,
+            quota_at(&snapshot, 0).progress,
             Progress::Counted {
                 used: Some(250.0),
                 total: Some(1000.0),
@@ -517,7 +525,7 @@ mod tests {
             }
         ));
         assert!(matches!(
-            snapshot.quotas[0].bucket,
+            quota_at(&snapshot, 0).bucket,
             Bucket::Rolling {
                 resets_at: Some(1_778_976_000_000),
                 ..
@@ -562,15 +570,21 @@ mod tests {
 
         let snapshot = zai_snapshot_from_payload(&payload, None, None).unwrap();
         let keys = snapshot
-            .quotas
+            .metrics
             .iter()
-            .map(|quota| quota.key.as_str())
+            .filter_map(|metric| match metric {
+                ProviderMetric::Quota(quota) => Some(quota.key.as_str()),
+                ProviderMetric::Balance(_) => None,
+            })
             .collect::<Vec<_>>();
 
         assert_eq!(keys, vec![SHORT_KEY, LONG_KEY]);
-        assert!(matches!(snapshot.quotas[0].bucket, Bucket::Rolling { .. }));
         assert!(matches!(
-            snapshot.quotas[1].bucket,
+            quota_at(&snapshot, 0).bucket,
+            Bucket::Rolling { .. }
+        ));
+        assert!(matches!(
+            quota_at(&snapshot, 1).bucket,
             Bucket::OpenEnded { .. }
         ));
     }

@@ -286,6 +286,7 @@ mod tests {
             enabled_providers: vec![
                 "openai-codex".to_owned(),
                 "anthropic".to_owned(),
+                "deepseek".to_owned(),
                 "zai".to_owned(),
             ],
             refresh_interval_secs: 30,

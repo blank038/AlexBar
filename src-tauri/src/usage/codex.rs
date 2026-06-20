@@ -5,8 +5,9 @@ use serde_json::Value;
 
 use super::{
     bool_from_value, now_millis, number_from_keys, reset_millis_from_keys, urgency_from_percent,
-    AccountInfo, Bucket, CountUnit, Progress, ProviderSnapshot, Quota, QuotaSource, RateLimitGate,
-    SourceError, ABSOLUTE_RESET_KEYS, RELATIVE_RESET_AFTER_SECONDS_KEYS,
+    AccountInfo, Bucket, CountUnit, Progress, ProviderMetric, ProviderSnapshot, Quota,
+    RateLimitGate, ReportSource, SourceError, ABSOLUTE_RESET_KEYS,
+    RELATIVE_RESET_AFTER_SECONDS_KEYS,
 };
 use crate::{
     credentials::{
@@ -24,10 +25,10 @@ const SHORT_KEY: &str = "codex.short";
 const LONG_KEY: &str = "codex.long";
 
 #[derive(Debug, Default)]
-pub struct CodexQuotaSource;
+pub struct CodexReportSource;
 
-fn quota_source(_gate: Arc<RateLimitGate>) -> Box<dyn QuotaSource> {
-    Box::<CodexQuotaSource>::default()
+fn report_source(_gate: Arc<RateLimitGate>) -> Box<dyn ReportSource> {
+    Box::<CodexReportSource>::default()
 }
 
 fn credential_source() -> Box<dyn CredentialSource> {
@@ -37,7 +38,7 @@ fn credential_source() -> Box<dyn CredentialSource> {
 pub const DESCRIPTOR: ProviderDescriptor = ProviderDescriptor {
     id: PROVIDER_ID,
     label: "Codex",
-    quota: quota_source,
+    report: report_source,
     credentials: credential_source,
     short_quota_key: SHORT_KEY,
     long_quota_key: LONG_KEY,
@@ -50,7 +51,7 @@ pub struct ChatgptClaims {
 }
 
 #[async_trait::async_trait]
-impl QuotaSource for CodexQuotaSource {
+impl ReportSource for CodexReportSource {
     fn provider(&self) -> &'static str {
         PROVIDER_ID
     }
@@ -230,7 +231,7 @@ fn codex_snapshot_from_payload(
         provider: PROVIDER_ID.to_owned(),
         refreshed_at: now_ms,
         account: account_info(account_id, email, plan),
-        quotas,
+        metrics: quotas.into_iter().map(ProviderMetric::from).collect(),
         note: None,
     })
 }
@@ -352,6 +353,13 @@ mod tests {
         format!("{header}.{payload}.signature")
     }
 
+    fn quota_at(snapshot: &ProviderSnapshot, index: usize) -> &Quota {
+        match &snapshot.metrics[index] {
+            ProviderMetric::Quota(quota) => quota,
+            ProviderMetric::Balance(_) => panic!("expected quota metric"),
+        }
+    }
+
     #[test]
     fn reads_chatgpt_claims_once() {
         let token = jwt_with_payload(json!({
@@ -391,23 +399,23 @@ mod tests {
             snapshot.account.as_ref().unwrap().plan.as_deref(),
             Some("plus")
         );
-        assert_eq!(snapshot.quotas.len(), 2);
-        assert_eq!(snapshot.quotas[0].display_name, "5 小时");
-        assert_eq!(snapshot.quotas[0].key, SHORT_KEY);
-        assert_eq!(snapshot.quotas[0].progress.used_fraction(), Some(0.42));
-        assert_eq!(snapshot.quotas[0].urgency, super::super::Urgency::Calm);
+        assert_eq!(snapshot.metrics.len(), 2);
+        assert_eq!(quota_at(&snapshot, 0).display_name, "5 小时");
+        assert_eq!(quota_at(&snapshot, 0).key, SHORT_KEY);
+        assert_eq!(quota_at(&snapshot, 0).progress.used_fraction(), Some(0.42));
+        assert_eq!(quota_at(&snapshot, 0).urgency, super::super::Urgency::Calm);
         assert!(matches!(
-            snapshot.quotas[0].bucket,
+            quota_at(&snapshot, 0).bucket,
             Bucket::Rolling {
                 duration_ms: 18_000_000,
                 ..
             }
         ));
-        assert_eq!(snapshot.quotas[1].key, LONG_KEY);
-        assert_eq!(snapshot.quotas[1].display_name, "7 天");
-        assert_eq!(snapshot.quotas[1].urgency, super::super::Urgency::Tense);
+        assert_eq!(quota_at(&snapshot, 1).key, LONG_KEY);
+        assert_eq!(quota_at(&snapshot, 1).display_name, "7 天");
+        assert_eq!(quota_at(&snapshot, 1).urgency, super::super::Urgency::Tense);
         assert!(matches!(
-            snapshot.quotas[1].bucket,
+            quota_at(&snapshot, 1).bucket,
             Bucket::Rolling {
                 duration_ms: 604_800_000,
                 resets_at: Some(1_778_976_000_000),
@@ -442,20 +450,20 @@ mod tests {
             snapshot.account.as_ref().unwrap().plan.as_deref(),
             Some("prolite")
         );
-        assert_eq!(snapshot.quotas[0].display_name, "5 小时");
-        assert_eq!(snapshot.quotas[0].progress.used_fraction(), Some(0.125));
+        assert_eq!(quota_at(&snapshot, 0).display_name, "5 小时");
+        assert_eq!(quota_at(&snapshot, 0).progress.used_fraction(), Some(0.125));
         assert!(matches!(
-            snapshot.quotas[0].bucket,
+            quota_at(&snapshot, 0).bucket,
             Bucket::Rolling {
                 resets_at: Some(1_778_976_000_000),
                 ..
             }
         ));
-        assert_eq!(snapshot.quotas[1].display_name, "7 天");
-        assert!(snapshot
-            .quotas
-            .iter()
-            .all(|quota| !quota.display_name.contains("prolite")));
+        assert_eq!(quota_at(&snapshot, 1).display_name, "7 天");
+        assert!(snapshot.metrics.iter().all(|metric| match metric {
+            ProviderMetric::Quota(quota) => !quota.display_name.contains("prolite"),
+            ProviderMetric::Balance(_) => true,
+        }));
     }
 
     #[test]
@@ -472,12 +480,15 @@ mod tests {
         });
 
         let snapshot = codex_snapshot_from_payload(&payload, None, None).unwrap();
-        assert_eq!(snapshot.quotas.len(), 1);
-        assert_eq!(snapshot.quotas[0].display_name, "5 小时");
-        assert_eq!(snapshot.quotas[0].progress.used_percent(), None);
-        assert_eq!(snapshot.quotas[0].urgency, super::super::Urgency::Unknown);
+        assert_eq!(snapshot.metrics.len(), 1);
+        assert_eq!(quota_at(&snapshot, 0).display_name, "5 小时");
+        assert_eq!(quota_at(&snapshot, 0).progress.used_percent(), None);
+        assert_eq!(
+            quota_at(&snapshot, 0).urgency,
+            super::super::Urgency::Unknown
+        );
         assert!(matches!(
-            snapshot.quotas[0].progress,
+            quota_at(&snapshot, 0).progress,
             Progress::Counted {
                 used: None,
                 total: None,
@@ -515,15 +526,15 @@ mod tests {
             .user_agent("AlexBar/0.1.0")
             .build()
             .expect("HTTP client should build");
-        let snapshot = CodexQuotaSource
+        let snapshot = CodexReportSource
             .fetch(&client, &credential)
             .await
-            .expect("Codex quota endpoint should return a snapshot");
+            .expect("Codex report endpoint should return a snapshot");
 
         assert!(snapshot.note.is_none());
-        assert!(snapshot
-            .quotas
-            .iter()
-            .any(|quota| quota.progress.used_percent().is_some()));
+        assert!(snapshot.metrics.iter().any(|metric| matches!(
+            metric,
+            ProviderMetric::Quota(quota) if quota.progress.used_percent().is_some()
+        )));
     }
 }

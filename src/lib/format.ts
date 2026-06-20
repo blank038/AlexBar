@@ -1,5 +1,5 @@
 import type { Text } from './i18n';
-import type { Bucket, CountUnit, Locale, Progress, Quota } from './types';
+import type { BalanceMetric, Bucket, CountUnit, Locale, Progress, QuotaMetric } from './types';
 
 export function formatUsedAmount(progress: Progress, locale: Locale, text: Text): string {
   if (progress.kind === 'ratio') {
@@ -28,10 +28,10 @@ export function formatRemainingAmount(progress: Progress, locale: Locale, text: 
   if (typeof remainingPercent === 'number') {
     return `${Math.round(remainingPercent)}% ${text.leftSuffix}`;
   }
-  return text.quotaUnknown;
+  return text.metricUnknown;
 }
 
-export function formatLimitLabel(quota: Quota, locale: Locale, text: Text): string {
+export function formatLimitLabel(quota: QuotaMetric, locale: Locale, text: Text): string {
   const windowName = formatWindowName(quota.bucket, locale, text);
   if (windowName) return windowName;
 
@@ -75,6 +75,25 @@ export function progressRemainingFraction(progress: Progress): number | null {
   const usedPercent = usedPercentFromProgress(progress);
   if (typeof usedPercent !== 'number') return null;
   return Math.max(1 - normalizePercent(usedPercent) / 100, 0);
+}
+
+export function formatBalanceAmount(balance: BalanceMetric, locale: Locale): string {
+  return new Intl.NumberFormat(locale, {
+    style: 'currency',
+    currency: balance.currency,
+    maximumFractionDigits: 2,
+  }).format(balance.amount);
+}
+
+export function formatBalanceBreakdown(balance: BalanceMetric, locale: Locale, text: Text): string {
+  const parts: string[] = [];
+  if (typeof balance.granted === 'number') {
+    parts.push(`${text.grantedBalance}: ${formatCurrency(balance.granted, balance.currency, locale)}`);
+  }
+  if (typeof balance.toppedUp === 'number') {
+    parts.push(`${text.toppedUpBalance}: ${formatCurrency(balance.toppedUp, balance.currency, locale)}`);
+  }
+  return parts.join(' · ');
 }
 
 function usedPercentFromProgress(progress: Progress): number | null {
@@ -152,13 +171,6 @@ function formatDuration(value: number, unit: 'day' | 'hour', locale: Locale, tex
 
 function formatAbsoluteAmount(value: number | null, unit: CountUnit, locale: Locale): string | null {
   if (typeof value !== 'number' || !Number.isFinite(value)) return null;
-  if (unit === 'dollars') {
-    return new Intl.NumberFormat(locale, {
-      style: 'currency',
-      currency: 'USD',
-      maximumFractionDigits: 2,
-    }).format(value);
-  }
 
   const formatted = new Intl.NumberFormat(locale, {
     notation: value >= 10_000 ? 'compact' : 'standard',
@@ -167,6 +179,14 @@ function formatAbsoluteAmount(value: number | null, unit: CountUnit, locale: Loc
   if (unit === 'tokens') return `${formatted} tok`;
   if (unit === 'requests') return locale === 'zh-CN' ? `${formatted}次` : `${formatted} req`;
   return formatted;
+}
+
+function formatCurrency(value: number, currency: string, locale: Locale): string {
+  return new Intl.NumberFormat(locale, {
+    style: 'currency',
+    currency,
+    maximumFractionDigits: 2,
+  }).format(value);
 }
 
 function normalizePercent(value: number): number {

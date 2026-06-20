@@ -2,13 +2,13 @@ use std::sync::Arc;
 
 use crate::{
     credentials::CredentialSource,
-    usage::{self, QuotaSource, RateLimitGate},
+    usage::{self, RateLimitGate, ReportSource},
 };
 
 pub struct ProviderDescriptor {
     pub id: &'static str,
     pub label: &'static str,
-    pub quota: fn(Arc<RateLimitGate>) -> Box<dyn QuotaSource>,
+    pub report: fn(Arc<RateLimitGate>) -> Box<dyn ReportSource>,
     pub credentials: fn() -> Box<dyn CredentialSource>,
     pub short_quota_key: &'static str,
     pub long_quota_key: &'static str,
@@ -17,6 +17,7 @@ pub struct ProviderDescriptor {
 pub static DESCRIPTORS: &[&ProviderDescriptor] = &[
     &usage::codex::DESCRIPTOR,
     &usage::claude::DESCRIPTOR,
+    &usage::deepseek::DESCRIPTOR,
     &usage::zai::DESCRIPTOR,
 ];
 
@@ -39,6 +40,7 @@ mod tests {
     fn finds_registered_providers() {
         assert!(find("openai-codex").is_some());
         assert!(find("anthropic").is_some());
+        assert!(find("deepseek").is_some());
         assert!(find("zai").is_some());
         assert!(find("gemini").is_none());
     }
@@ -47,7 +49,7 @@ mod tests {
     fn ids_follow_descriptor_order() {
         assert_eq!(
             ids().collect::<Vec<_>>(),
-            ["openai-codex", "anthropic", "zai"]
+            ["openai-codex", "anthropic", "deepseek", "zai"]
         );
     }
 }

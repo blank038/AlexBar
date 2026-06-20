@@ -4,8 +4,8 @@ use serde_json::Value;
 
 use super::{
     now_millis, number_from_keys, reset_millis_from_keys, urgency_from_percent, AccountInfo,
-    Bucket, Progress, ProviderSnapshot, Quota, QuotaSource, RateLimitGate, SourceError,
-    ABSOLUTE_RESET_KEYS, RELATIVE_RESET_AFTER_SECONDS_KEYS,
+    Bucket, Progress, ProviderMetric, ProviderSnapshot, Quota, RateLimitGate, ReportSource,
+    SourceError, ABSOLUTE_RESET_KEYS, RELATIVE_RESET_AFTER_SECONDS_KEYS,
 };
 use crate::{
     credentials::{
@@ -27,18 +27,18 @@ const SHORT_KEY: &str = "claude.5h";
 const LONG_KEY: &str = "claude.7d";
 
 #[derive(Debug)]
-pub struct ClaudeQuotaSource {
+pub struct ClaudeReportSource {
     gate: Arc<RateLimitGate>,
 }
 
-impl ClaudeQuotaSource {
+impl ClaudeReportSource {
     fn new(gate: Arc<RateLimitGate>) -> Self {
         Self { gate }
     }
 }
 
-fn quota_source(gate: Arc<RateLimitGate>) -> Box<dyn QuotaSource> {
-    Box::new(ClaudeQuotaSource::new(gate))
+fn report_source(gate: Arc<RateLimitGate>) -> Box<dyn ReportSource> {
+    Box::new(ClaudeReportSource::new(gate))
 }
 
 fn credential_source() -> Box<dyn CredentialSource> {
@@ -48,7 +48,7 @@ fn credential_source() -> Box<dyn CredentialSource> {
 pub const DESCRIPTOR: ProviderDescriptor = ProviderDescriptor {
     id: PROVIDER_ID,
     label: PROVIDER_LABEL,
-    quota: quota_source,
+    report: report_source,
     credentials: credential_source,
     short_quota_key: SHORT_KEY,
     long_quota_key: LONG_KEY,
@@ -111,7 +111,7 @@ impl Retry {
 }
 
 #[async_trait::async_trait]
-impl QuotaSource for ClaudeQuotaSource {
+impl ReportSource for ClaudeReportSource {
     fn provider(&self) -> &'static str {
         PROVIDER_ID
     }
@@ -263,7 +263,7 @@ async fn build_snapshot_from_payload(
         provider: PROVIDER_ID.to_owned(),
         refreshed_at: now_millis(),
         account,
-        quotas,
+        metrics: quotas.into_iter().map(ProviderMetric::from).collect(),
         note: None,
     })
 }
@@ -541,6 +541,13 @@ mod tests {
         }
     }
 
+    fn quota_at(snapshot: &ProviderSnapshot, index: usize) -> &Quota {
+        match &snapshot.metrics[index] {
+            ProviderMetric::Quota(quota) => quota,
+            ProviderMetric::Balance(_) => panic!("expected quota metric"),
+        }
+    }
+
     #[tokio::test]
     async fn turns_claude_buckets_into_quotas() {
         let payload = json!({
@@ -561,13 +568,16 @@ mod tests {
         .await
         .unwrap();
 
-        assert_eq!(snapshot.quotas.len(), 3);
-        assert_eq!(snapshot.quotas[0].key, SHORT_KEY);
-        assert_eq!(snapshot.quotas[0].display_name, "5 小时");
-        assert_eq!(snapshot.quotas[0].progress.used_fraction(), Some(0.125));
-        assert_eq!(snapshot.quotas[1].urgency, super::super::Urgency::Tense);
-        assert_eq!(snapshot.quotas[1].display_name, "7 天");
-        assert_eq!(snapshot.quotas[2].urgency, super::super::Urgency::Capped);
+        assert_eq!(snapshot.metrics.len(), 3);
+        assert_eq!(quota_at(&snapshot, 0).key, SHORT_KEY);
+        assert_eq!(quota_at(&snapshot, 0).display_name, "5 小时");
+        assert_eq!(quota_at(&snapshot, 0).progress.used_fraction(), Some(0.125));
+        assert_eq!(quota_at(&snapshot, 1).urgency, super::super::Urgency::Tense);
+        assert_eq!(quota_at(&snapshot, 1).display_name, "7 天");
+        assert_eq!(
+            quota_at(&snapshot, 2).urgency,
+            super::super::Urgency::Capped
+        );
     }
 
     #[test]
@@ -755,15 +765,15 @@ mod tests {
             .build()
             .expect("HTTP client should build");
         let gate = Arc::new(RateLimitGate::default());
-        let snapshot = ClaudeQuotaSource::new(gate)
+        let snapshot = ClaudeReportSource::new(gate)
             .fetch(&client, &credential)
             .await
-            .expect("Claude quota endpoint should return a snapshot");
+            .expect("Claude report endpoint should return a snapshot");
 
         assert!(snapshot.note.is_none());
-        assert!(snapshot
-            .quotas
-            .iter()
-            .any(|quota| quota.progress.used_percent().is_some()));
+        assert!(snapshot.metrics.iter().any(|metric| matches!(
+            metric,
+            ProviderMetric::Quota(quota) if quota.progress.used_percent().is_some()
+        )));
     }
 }

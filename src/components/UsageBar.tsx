@@ -1,9 +1,9 @@
 import type { Text } from '../lib/i18n';
 import { formatLimitLabel, formatRemainingAmount, formatReset, formatUsedAmount, progressRemainingFraction } from '../lib/format';
-import type { Locale, Quota, Urgency } from '../lib/types';
+import type { Locale, QuotaMetric, Urgency } from '../lib/types';
 
 interface UsageBarProps {
-  quota: Quota;
+  quota: QuotaMetric;
   accent: string;
   locale: Locale;
   text: Text;

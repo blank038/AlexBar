@@ -18,6 +18,7 @@ const POPOVER_RESIZE_DEBOUNCE_MS = 60;
 const SHELL_SELECTOR = '.shell';
 const PANEL_SELECTOR = '.panel';
 const PANEL_INNER_SELECTOR = '.panel__inner';
+const PROVIDER_VISIBLE_HEIGHT_DATASET_KEY = 'visibleHeight';
 
 export default function App() {
   const [snapshots, setSnapshots] = useState<ProviderSnapshot[]>([]);
@@ -101,17 +102,21 @@ export default function App() {
       applyProviderListLimit(providerList, settings.visibleProviderLimit);
     };
 
+    const panel = document.querySelector<HTMLElement>(PANEL_SELECTOR)!;
     const observer = new ResizeObserver(syncProviderListHeight);
     observer.observe(providerList);
+    observer.observe(panel);
     for (const provider of providerList.querySelectorAll<HTMLElement>('.provider')) {
       observer.observe(provider);
     }
+    window.addEventListener('resize', syncProviderListHeight);
     syncProviderListHeight();
 
     return () => {
       observer.disconnect();
+      window.removeEventListener('resize', syncProviderListHeight);
       providerList.style.maxHeight = '';
-      providerList.style.overflowY = '';
+      delete providerList.dataset[PROVIDER_VISIBLE_HEIGHT_DATASET_KEY];
     };
   }, [enabledProviders, snapshots, settings.visibleProviderLimit]);
 
@@ -206,8 +211,14 @@ function upsertSnapshot(snapshots: ProviderSnapshot[], snapshot: ProviderSnapsho
 
 function measurePopoverHeight(panel: HTMLElement, panelInner: HTMLElement): number {
   const panelStyle = window.getComputedStyle(panel);
+  const providerList = panelInner.querySelector<HTMLElement>('.provider-list');
+  const desiredProviderListHeight = Number(providerList?.dataset[PROVIDER_VISIBLE_HEIGHT_DATASET_KEY] ?? 0);
+  const currentProviderListHeight = providerList?.offsetHeight ?? 0;
+  const clampedProviderListHeight = Math.max(0, desiredProviderListHeight - currentProviderListHeight);
+
   return Math.ceil(
     panelInner.offsetHeight
+      + clampedProviderListHeight
       + Number.parseFloat(panelStyle.paddingTop)
       + Number.parseFloat(panelStyle.paddingBottom)
       + Number.parseFloat(panelStyle.borderTopWidth)
@@ -217,25 +228,39 @@ function measurePopoverHeight(panel: HTMLElement, panelInner: HTMLElement): numb
 
 function applyProviderListLimit(providerList: HTMLElement, visibleProviderLimit: number) {
   const providers = providerList.querySelectorAll<HTMLElement>('.provider');
-  const visibleCount = providers.length;
-  if (visibleProviderLimit >= visibleCount) {
+  const visibleCount = Math.min(visibleProviderLimit, providers.length);
+  if (visibleCount === 0) {
     providerList.style.maxHeight = '';
-    providerList.style.overflowY = '';
+    delete providerList.dataset[PROVIDER_VISIBLE_HEIGHT_DATASET_KEY];
     return;
   }
 
   const rowGap = Number.parseFloat(window.getComputedStyle(providerList).rowGap);
-  let maxHeight = 0;
-  for (let index = 0; index < visibleProviderLimit; index += 1) {
-    maxHeight += providers[index].offsetHeight;
+  let visibleHeight = 0;
+  for (let index = 0; index < visibleCount; index += 1) {
+    visibleHeight += providers[index].offsetHeight;
   }
-  maxHeight += (visibleProviderLimit - 1) * rowGap;
+  visibleHeight += (visibleCount - 1) * rowGap;
+
+  const availableHeight = measureProviderListAvailableHeight(providerList);
+  const maxHeight = Math.min(visibleHeight, availableHeight);
+  providerList.dataset[PROVIDER_VISIBLE_HEIGHT_DATASET_KEY] = `${Math.ceil(visibleHeight)}`;
 
   const nextMaxHeight = `${Math.ceil(maxHeight)}px`;
   if (providerList.style.maxHeight !== nextMaxHeight) {
     providerList.style.maxHeight = nextMaxHeight;
   }
-  if (providerList.style.overflowY !== 'auto') {
-    providerList.style.overflowY = 'auto';
-  }
+}
+
+function measureProviderListAvailableHeight(providerList: HTMLElement): number {
+  const panel = providerList.closest<HTMLElement>(PANEL_SELECTOR)!;
+  const panelStyle = window.getComputedStyle(panel);
+  const panelRect = panel.getBoundingClientRect();
+  const providerListRect = providerList.getBoundingClientRect();
+  const panelContentBottom =
+    panelRect.bottom
+    - Number.parseFloat(panelStyle.borderBottomWidth)
+    - Number.parseFloat(panelStyle.paddingBottom);
+
+  return Math.max(0, panelContentBottom - providerListRect.top);
 }

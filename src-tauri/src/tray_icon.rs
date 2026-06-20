@@ -2,7 +2,7 @@ use tauri::{image::Image, AppHandle};
 
 use crate::{
     providers,
-    usage::{quota_remaining_fraction, quota_used_fraction, ProviderSnapshot},
+    usage::{quota_metric_remaining_fraction, quota_metric_used_fraction, ProviderSnapshot},
 };
 
 const TRAY_ID: &str = "main-tray";
@@ -49,8 +49,8 @@ fn build_tooltip_from_reports(snapshots: &[ProviderSnapshot]) -> String {
             lines.push(format!("{provider_label}: {note}"));
             continue;
         }
-        if let Some(quota) = snapshot.quotas.first() {
-            if let Some(remaining) = quota_remaining_fraction(quota) {
+        if let Some(metric) = snapshot.metrics.first() {
+            if let Some(remaining) = quota_metric_remaining_fraction(metric) {
                 lines.push(format!(
                     "{}: {:.0}% remaining",
                     provider_label,
@@ -80,10 +80,10 @@ fn select_meter_fractions(snapshots: &[ProviderSnapshot]) -> (Option<f64>, Optio
 
 fn find_quota_fraction(snapshot: &ProviderSnapshot, quota_key: &str) -> Option<f64> {
     snapshot
-        .quotas
+        .metrics
         .iter()
-        .find(|quota| quota.key == quota_key)
-        .and_then(quota_used_fraction)
+        .find(|metric| matches!(metric, crate::usage::ProviderMetric::Quota(quota) if quota.key == quota_key))
+        .and_then(quota_metric_used_fraction)
         .filter(|value| value.is_finite())
         .map(|value| value.clamp(0.0, 1.0))
 }
@@ -129,7 +129,7 @@ fn set_pixel(rgba: &mut [u8], x: u32, y: u32, color: [u8; 4]) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::usage::{Bucket, Progress, Quota, Urgency};
+    use crate::usage::{Balance, Bucket, Progress, ProviderMetric, Quota, Urgency};
 
     #[test]
     fn selects_codex_meter_fractions_first() {
@@ -137,7 +137,7 @@ mod tests {
             provider: "openai-codex".to_owned(),
             refreshed_at: 1,
             account: None,
-            quotas: vec![quota("codex.short", 25.0), quota("codex.long", 75.0)],
+            metrics: vec![quota("codex.short", 25.0), quota("codex.long", 75.0)],
             note: None,
         };
         assert_eq!(
@@ -146,8 +146,29 @@ mod tests {
         );
     }
 
-    fn quota(key: &str, used_percent: f32) -> Quota {
-        Quota {
+    #[test]
+    fn ignores_balance_metrics_when_selecting_meter_fractions() {
+        let snapshot = ProviderSnapshot {
+            provider: "deepseek".to_owned(),
+            refreshed_at: 1,
+            account: None,
+            metrics: vec![ProviderMetric::from(Balance {
+                key: "deepseek.balance.CNY".to_owned(),
+                display_name: "CNY 余额".to_owned(),
+                amount: 110.0,
+                currency: "CNY".to_owned(),
+                granted: Some(10.0),
+                topped_up: Some(100.0),
+                is_available: true,
+                urgency: Urgency::Calm,
+            })],
+            note: None,
+        };
+        assert_eq!(select_meter_fractions(&[snapshot]), (None, None));
+    }
+
+    fn quota(key: &str, used_percent: f32) -> ProviderMetric {
+        ProviderMetric::from(Quota {
             key: key.to_owned(),
             display_name: key.to_owned(),
             bucket: Bucket::OpenEnded {
@@ -156,6 +177,6 @@ mod tests {
             },
             progress: Progress::Ratio { used_percent },
             urgency: Urgency::Calm,
-        }
+        })
     }
 }

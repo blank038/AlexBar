@@ -134,7 +134,7 @@ async fn cached_successful_provider_snapshot(
     provider: &str,
 ) -> Option<ProviderSnapshot> {
     state.snapshots().await.into_iter().find(|snapshot| {
-        snapshot.provider == provider && snapshot.note.is_none() && !snapshot.quotas.is_empty()
+        snapshot.provider == provider && snapshot.note.is_none() && !snapshot.metrics.is_empty()
     })
 }
 
@@ -143,7 +143,7 @@ fn transient_waiting_snapshot(provider: &str) -> ProviderSnapshot {
         provider: provider.to_owned(),
         refreshed_at: now_millis(),
         account: None,
-        quotas: Vec::new(),
+        metrics: Vec::new(),
         note: None,
     }
 }
@@ -168,9 +168,9 @@ async fn fetch_provider(provider: &str, state: &AppState) -> Result<ProviderSnap
     let gate = state
         .quota_gate(provider)
         .ok_or_else(|| FetchError::Message(format!("missing quota gate for {provider}")))?;
-    let quota_source = (descriptor.quota)(gate);
-    debug_assert_eq!(quota_source.provider(), provider);
-    quota_source
+    let report_source = (descriptor.report)(gate);
+    debug_assert_eq!(report_source.provider(), provider);
+    report_source
         .fetch(state.client(), &credential)
         .await
         .map_err(FetchError::Source)

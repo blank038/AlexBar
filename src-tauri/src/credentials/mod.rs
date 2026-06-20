@@ -1,5 +1,6 @@
 pub mod claude_file;
 pub mod codex_file;
+pub mod deepseek_secret;
 pub mod zai_secret;
 
 use std::{fs, path::PathBuf};

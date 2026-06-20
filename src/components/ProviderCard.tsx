@@ -2,7 +2,7 @@ import type { CSSProperties } from 'react';
 import { formatFetchedAt } from '../lib/format';
 import type { Text } from '../lib/i18n';
 import type { Locale, ProviderDefinition, ProviderSnapshot } from '../lib/types';
-import { UsageBar } from './UsageBar';
+import { ProviderMetricView } from './ProviderMetricView';
 
 interface ProviderCardProps {
   provider: ProviderDefinition;
@@ -15,7 +15,7 @@ interface ProviderCardProps {
 }
 
 export function ProviderCard({ provider, snapshot, enabled, refreshing, locale, text, onRefresh }: ProviderCardProps) {
-  const status = snapshot?.note ? 'error' : snapshot?.quotas.length ? 'live' : enabled ? 'waiting' : 'disabled';
+  const status = snapshot?.note ? 'error' : snapshot?.metrics.length ? 'live' : enabled ? 'waiting' : 'disabled';
 
   return (
     <article className={`provider provider--${status}`} style={{ '--accent': provider.accent } as CSSProperties}>
@@ -37,10 +37,10 @@ export function ProviderCard({ provider, snapshot, enabled, refreshing, locale, 
 
       {snapshot?.note ? <p className="provider__error">{snapshot.note}</p> : null}
 
-      {!snapshot?.note && snapshot?.quotas.length ? (
+      {!snapshot?.note && snapshot?.metrics.length ? (
         <div className="provider__limits">
-          {snapshot.quotas.map((quota) => (
-            <UsageBar key={quota.key} quota={quota} accent={provider.accent} locale={locale} text={text} />
+          {snapshot.metrics.map((metric) => (
+            <ProviderMetricView key={metric.key} metric={metric} accent={provider.accent} locale={locale} text={text} />
           ))}
         </div>
       ) : null}
@@ -59,7 +59,7 @@ export function ProviderCard({ provider, snapshot, enabled, refreshing, locale, 
 function statusLabel(status: 'error' | 'live' | 'waiting' | 'disabled', text: Text): string {
   switch (status) {
     case 'live':
-      return text.liveQuota;
+      return text.liveMetrics;
     case 'error':
       return text.needsAttention;
     case 'disabled':

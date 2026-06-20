@@ -2,13 +2,13 @@ export type ProviderId = string;
 export type Locale = 'zh-CN' | 'en-US';
 
 export type Urgency = 'calm' | 'tense' | 'capped' | 'unknown';
-export type CountUnit = 'tokens' | 'requests' | 'dollars';
+export type CountUnit = 'tokens' | 'requests';
 
 export interface ProviderSnapshot {
   provider: ProviderId;
   refreshedAt: number;
   account: AccountInfo | null;
-  quotas: Quota[];
+  metrics: ProviderMetric[];
   note: string | null;
 }
 
@@ -18,11 +18,26 @@ export interface AccountInfo {
   plan: string | null;
 }
 
-export interface Quota {
+export type ProviderMetric = QuotaMetric | BalanceMetric;
+
+export interface QuotaMetric {
+  kind: 'quota';
   key: string;
   displayName: string;
   bucket: Bucket;
   progress: Progress;
+  urgency: Urgency;
+}
+
+export interface BalanceMetric {
+  kind: 'balance';
+  key: string;
+  displayName: string;
+  amount: number;
+  currency: string;
+  granted: number | null;
+  toppedUp: number | null;
+  isAvailable: boolean;
   urgency: Urgency;
 }
 
@@ -73,6 +88,14 @@ export const PROVIDERS: ProviderDefinition[] = [
     credentialPath: '~/.claude/.credentials.json',
     accent: '#5ac4ff',
     requiresApiKey: false,
+  },
+  {
+    id: 'deepseek',
+    name: 'DeepSeek API Balance',
+    shortName: 'DeepSeek',
+    credentialPath: 'AlexBar secrets.json',
+    accent: '#34d399',
+    requiresApiKey: true,
   },
   {
     id: 'zai',
