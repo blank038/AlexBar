@@ -1,6 +1,6 @@
 [package]
 name = "alexbar"
-version = "0.1.0"
+version = "0.1.1"
 description = "Cross-platform subscription usage menubar"
 authors = ["AlexBar"]
 edition = "2021"
