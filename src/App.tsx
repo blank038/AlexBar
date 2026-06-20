@@ -4,11 +4,12 @@ import { Header } from './components/Header';
 import { ProviderCard } from './components/ProviderCard';
 import * as api from './lib/api';
 import { getText } from './lib/i18n';
-import type { AppSettings, ProviderId, ProviderSnapshot } from './lib/types';
+import type { AppSettings, ProviderDefinition, ProviderId, ProviderSnapshot } from './lib/types';
 import { PROVIDERS } from './lib/types';
 
 const DEFAULT_SETTINGS: AppSettings = {
   enabledProviders: PROVIDERS.map((provider) => provider.id),
+  providerOrder: PROVIDERS.map((provider) => provider.id),
   refreshIntervalSecs: 60,
   visibleProviderLimit: 2,
   locale: 'zh-CN',
@@ -28,9 +29,17 @@ export default function App() {
   const [appError, setAppError] = useState<string | null>(null);
   const text = getText(settings.locale);
   const providerListRef = useRef<HTMLElement>(null);
+  const orderedProviders = useMemo(
+    () => orderProviders(settings.providerOrder),
+    [settings.providerOrder],
+  );
   const enabledProviders = useMemo(
-    () => PROVIDERS.filter((provider) => settings.enabledProviders.includes(provider.id)),
-    [settings.enabledProviders],
+    () => orderedProviders.filter((provider) => settings.enabledProviders.includes(provider.id)),
+    [orderedProviders, settings.enabledProviders],
+  );
+  const snapshotByProvider = useMemo(
+    () => new Map(snapshots.map((snapshot) => [snapshot.provider, snapshot])),
+    [snapshots],
   );
 
   useEffect(() => {
@@ -42,7 +51,7 @@ export default function App() {
         const [nextSettings, cachedSnapshots] = await Promise.all([api.getSettings(), api.getReports()]);
         if (disposed) return;
         setSettings(nextSettings);
-        setSnapshots(orderSnapshots(cachedSnapshots));
+        setSnapshots(cachedSnapshots);
       } catch (error) {
         if (!disposed) setAppError(String(error));
       } finally {
@@ -51,7 +60,7 @@ export default function App() {
     }
 
     const usageListener = listen<ProviderSnapshot[]>('usage://updated', (event) => {
-      setSnapshots(orderSnapshots(event.payload));
+      setSnapshots(event.payload);
     });
     const settingsListener = listen<AppSettings>('settings://updated', (event) => {
       setSettings(event.payload);
@@ -129,7 +138,7 @@ export default function App() {
     setLoading(true);
     setAppError(null);
     try {
-      setSnapshots(orderSnapshots(await api.refreshAll()));
+      setSnapshots(await api.refreshAll());
     } catch (error) {
       setAppError(String(error));
     } finally {
@@ -142,7 +151,7 @@ export default function App() {
     setAppError(null);
     try {
       const snapshot = await api.refreshProvider(provider);
-      setSnapshots((current) => orderSnapshots(upsertSnapshot(current, snapshot)));
+      setSnapshots((current) => upsertSnapshot(current, snapshot));
     } catch (error) {
       setAppError(String(error));
     } finally {
@@ -179,7 +188,7 @@ export default function App() {
               <ProviderCard
                 key={provider.id}
                 provider={provider}
-                snapshot={snapshots.find((snapshot) => snapshot.provider === provider.id)}
+                snapshot={snapshotByProvider.get(provider.id)}
                 enabled={true}
                 refreshing={refreshingProvider === provider.id}
                 onRefresh={() => refreshOne(provider.id)}
@@ -194,11 +203,11 @@ export default function App() {
   );
 }
 
-function orderSnapshots(snapshots: ProviderSnapshot[]): ProviderSnapshot[] {
-  const rank = new Map(PROVIDERS.map((provider, index) => [provider.id, index]));
-  return [...snapshots].sort((left, right) => {
-    const leftRank = rank.get(left.provider) ?? Number.MAX_SAFE_INTEGER;
-    const rightRank = rank.get(right.provider) ?? Number.MAX_SAFE_INTEGER;
+function orderProviders(providerOrder: ProviderId[]): ProviderDefinition[] {
+  const rank = new Map(providerOrder.map((provider, index) => [provider, index]));
+  return [...PROVIDERS].sort((left, right) => {
+    const leftRank = rank.get(left.id) ?? Number.MAX_SAFE_INTEGER;
+    const rightRank = rank.get(right.id) ?? Number.MAX_SAFE_INTEGER;
     return leftRank - rightRank;
   });
 }

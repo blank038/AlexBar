@@ -131,7 +131,8 @@ h1 {
 .icon-button,
 .interval,
 .language-option,
-.secret-field__button {
+.secret-field__button,
+.provider-setting__drag-handle {
   border: 1px solid rgba(247, 243, 234, 0.16);
   background: rgba(255, 255, 255, 0.065);
   transition: transform 140ms ease, border-color 140ms ease, background 140ms ease;
@@ -142,7 +143,8 @@ h1 {
 .icon-button:hover,
 .interval:hover,
 .language-option:hover,
-.secret-field__button:hover {
+.secret-field__button:hover,
+.provider-setting__drag-handle:hover {
   transform: translateY(-1px);
   border-color: rgba(200, 255, 95, 0.58);
   background: rgba(200, 255, 95, 0.1);
@@ -152,7 +154,8 @@ h1 {
 .icon-button:disabled,
 .interval:disabled,
 .language-option:disabled,
-.secret-field__button:disabled {
+.secret-field__button:disabled,
+.provider-setting__drag-handle:disabled {
   cursor: wait;
   opacity: 0.45;
   transform: none;
@@ -519,8 +522,67 @@ h1 {
 }
 
 .provider-setting {
+  position: relative;
   display: grid;
   gap: 8px;
+}
+
+.provider-setting::before,
+.provider-setting::after {
+  content: "";
+  position: absolute;
+  right: 0;
+  left: 0;
+  height: 2px;
+  border-radius: 999px;
+  background: transparent;
+}
+
+.provider-setting--drop-before::before {
+  top: -5px;
+  background: #c8ff5f;
+  box-shadow: 0 0 16px rgba(200, 255, 95, 0.65);
+}
+
+.provider-setting--drop-after::after {
+  bottom: -5px;
+  background: #c8ff5f;
+  box-shadow: 0 0 16px rgba(200, 255, 95, 0.65);
+}
+
+.provider-setting--dragging {
+  opacity: 0.48;
+}
+
+.provider-setting__row {
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+  min-width: 0;
+}
+
+.provider-setting__body {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.provider-setting__drag-handle {
+  display: grid;
+  width: 32px;
+  height: 38px;
+  place-items: center;
+  border-radius: 11px;
+  padding: 0;
+  color: rgba(247, 243, 234, 0.6);
+  cursor: grab;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.provider-setting__drag-handle:active {
+  cursor: grabbing;
 }
 
 .secret-field {

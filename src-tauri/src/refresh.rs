@@ -5,7 +5,7 @@ use tauri::{AppHandle, Emitter, Manager};
 use crate::{
     credentials::{claude_file::REFRESH_SKEW_MS, source_for_provider},
     providers,
-    state::AppState,
+    state::{AppSettings, AppState},
     tray_icon,
     usage::{failure_snapshot, now_millis, ProviderSnapshot, SourceError},
 };
@@ -56,11 +56,8 @@ async fn refresh_enabled_providers_unlocked(app: &AppHandle) -> Vec<ProviderSnap
     let settings = state.settings().await;
     let mut snapshots = Vec::with_capacity(settings.enabled_providers.len());
 
-    for descriptor in providers::DESCRIPTORS {
-        let provider = descriptor.id;
-        if settings.is_enabled(provider) {
-            snapshots.push(refresh_provider_snapshot_unlocked(provider, app).await);
-        }
+    for provider in settings.ordered_enabled_providers() {
+        snapshots.push(refresh_provider_snapshot_unlocked(provider, app).await);
     }
 
     let refreshed_at = now_millis();
@@ -107,18 +104,24 @@ async fn refresh_provider_snapshot_unlocked(provider: &str, app: &AppHandle) -> 
 async fn fresh_snapshots_for_current_settings(state: &AppState) -> Option<Vec<ProviderSnapshot>> {
     let settings = state.settings().await;
     let snapshots = state.cached_snapshots(now_millis()).await?;
-    let enabled = settings.enabled_providers.as_slice();
-    if snapshots.len() == enabled.len()
-        && enabled.iter().all(|provider| {
-            snapshots
-                .iter()
-                .any(|snapshot| snapshot.provider == *provider)
-        })
-    {
+    if snapshots_match_current_settings(&settings, &snapshots) {
         Some(snapshots)
     } else {
         None
     }
+}
+
+fn snapshots_match_current_settings(
+    settings: &AppSettings,
+    snapshots: &[ProviderSnapshot],
+) -> bool {
+    let ordered_enabled = settings.ordered_enabled_providers().collect::<Vec<_>>();
+    snapshots.len() == ordered_enabled.len()
+        && ordered_enabled.iter().enumerate().all(|(index, provider)| {
+            snapshots
+                .get(index)
+                .is_some_and(|snapshot| snapshot.provider == **provider)
+        })
 }
 
 async fn fresh_provider_snapshot(state: &AppState, provider: &str) -> Option<ProviderSnapshot> {
@@ -193,4 +196,36 @@ impl std::fmt::Display for FetchError {
 fn publish_snapshots(app: &AppHandle, snapshots: &[ProviderSnapshot]) {
     let _ = app.emit("usage://updated", snapshots);
     tray_icon::update_tray_icon(app, snapshots);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fresh_snapshot_check_requires_saved_provider_order() {
+        let settings = AppSettings {
+            enabled_providers: vec!["openai-codex".to_owned(), "zai".to_owned()],
+            provider_order: vec![
+                "zai".to_owned(),
+                "deepseek".to_owned(),
+                "anthropic".to_owned(),
+                "openai-codex".to_owned(),
+            ],
+            refresh_interval_secs: 60,
+            visible_provider_limit: 2,
+            locale: "zh-CN".to_owned(),
+        };
+        let ordered = vec![
+            transient_waiting_snapshot("zai"),
+            transient_waiting_snapshot("openai-codex"),
+        ];
+        let fixed = vec![
+            transient_waiting_snapshot("openai-codex"),
+            transient_waiting_snapshot("zai"),
+        ];
+
+        assert!(snapshots_match_current_settings(&settings, &ordered));
+        assert!(!snapshots_match_current_settings(&settings, &fixed));
+    }
 }

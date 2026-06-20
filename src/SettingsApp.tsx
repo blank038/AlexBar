@@ -1,14 +1,15 @@
 import { disable, enable, isEnabled } from '@tauri-apps/plugin-autostart';
-import { useEffect, useState } from 'react';
+import { type DragEvent, useEffect, useMemo, useState } from 'react';
 import * as api from './lib/api';
 import { getText, LOCALES } from './lib/i18n';
-import type { AppSettings, ProviderId } from './lib/types';
+import type { AppSettings, ProviderDefinition, ProviderId } from './lib/types';
 import { PROVIDERS } from './lib/types';
 
 
 const API_KEY_FIELD = 'api_key';
 const DEFAULT_SETTINGS: AppSettings = {
   enabledProviders: PROVIDERS.map((provider) => provider.id),
+  providerOrder: PROVIDERS.map((provider) => provider.id),
   refreshIntervalSecs: 60,
   visibleProviderLimit: 2,
   locale: 'zh-CN',
@@ -17,6 +18,12 @@ const DEFAULT_SETTINGS: AppSettings = {
 const INTERVALS: AppSettings['refreshIntervalSecs'][] = [30, 60, 120, 300];
 const VISIBLE_PROVIDER_LIMITS = [1, 2, 3, 4, 5, 6, 7, 8] as const;
 type SettingsCategory = 'provider' | 'system';
+type DropPosition = 'before' | 'after';
+
+interface ProviderDropTarget {
+  provider: ProviderId;
+  position: DropPosition;
+}
 
 export default function SettingsApp() {
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
@@ -26,7 +33,13 @@ export default function SettingsApp() {
   const [secretInputs, setSecretInputs] = useState<Record<ProviderId, string>>({});
   const [activeCategory, setActiveCategory] = useState<SettingsCategory>('provider');
   const [appError, setAppError] = useState<string | null>(null);
+  const [draggedProvider, setDraggedProvider] = useState<ProviderId | null>(null);
+  const [dropTarget, setDropTarget] = useState<ProviderDropTarget | null>(null);
   const text = getText(settings.locale);
+  const orderedProviders = useMemo(
+    () => orderProviders(settings.providerOrder),
+    [settings.providerOrder],
+  );
   const providerCategoryClass =
     activeCategory === 'provider'
       ? 'settings-window__category settings-window__category--active'
@@ -100,6 +113,42 @@ export default function SettingsApp() {
       ? [...settings.enabledProviders, provider]
       : settings.enabledProviders.filter((value) => value !== provider);
     void persistSettings({ ...settings, enabledProviders });
+  }
+
+  function startProviderDrag(event: DragEvent<HTMLButtonElement>, provider: ProviderId) {
+    setDraggedProvider(provider);
+    event.dataTransfer.effectAllowed = 'move';
+    event.dataTransfer.setData('text/plain', provider);
+  }
+
+  function handleProviderDragOver(event: DragEvent<HTMLDivElement>, provider: ProviderId) {
+    if (!draggedProvider || draggedProvider === provider || saving) return;
+
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'move';
+    setDropTarget({ provider, position: getDropPosition(event) });
+  }
+
+  function dropProvider(event: DragEvent<HTMLDivElement>, targetProvider: ProviderId) {
+    event.preventDefault();
+    const dragged = draggedProvider ?? event.dataTransfer.getData('text/plain');
+    finishProviderDrag();
+    if (!dragged || dragged === targetProvider || saving) return;
+
+    const providerOrder = moveProvider(
+      settings.providerOrder,
+      dragged,
+      targetProvider,
+      getDropPosition(event),
+    );
+    if (sameProviderOrder(providerOrder, settings.providerOrder)) return;
+
+    void persistSettings({ ...settings, providerOrder });
+  }
+
+  function finishProviderDrag() {
+    setDraggedProvider(null);
+    setDropTarget(null);
   }
 
   async function saveApiKey(provider: ProviderId) {
@@ -180,58 +229,88 @@ export default function SettingsApp() {
             <>
               <div className="settings-window__group">
                 <p className="settings-window__label">{text.providers}</p>
-                {PROVIDERS.map((provider) => {
+                {orderedProviders.map((provider) => {
                   const checked = settings.enabledProviders.includes(provider.id);
                   const apiKeyConfigured = secretStatus[provider.id] === true;
+                  const dropPosition = dropTarget?.provider === provider.id ? dropTarget.position : null;
+                  const providerSettingClass = [
+                    'provider-setting',
+                    draggedProvider === provider.id ? 'provider-setting--dragging' : '',
+                    dropPosition ? `provider-setting--drop-${dropPosition}` : '',
+                  ]
+                    .filter(Boolean)
+                    .join(' ');
                   return (
-                    <div className="provider-setting" key={provider.id}>
-                      <label className="toggle">
-                        <input
-                          type="checkbox"
-                          checked={checked}
+                    <div
+                      className={providerSettingClass}
+                      key={provider.id}
+                      onDragOver={(event) => handleProviderDragOver(event, provider.id)}
+                      onDrop={(event) => dropProvider(event, provider.id)}
+                    >
+                      <div className="provider-setting__row">
+                        <button
+                          className="provider-setting__drag-handle"
+                          type="button"
+                          draggable={!saving}
                           disabled={saving}
-                          onChange={(event) => setProvider(provider.id, event.currentTarget.checked)}
-                        />
-                        <span className="toggle__visual" />
-                        <span>
-                          <strong>{provider.shortName}</strong>
-                          <em>{provider.credentialPath}</em>
-                        </span>
-                      </label>
+                          aria-label={`${text.reorderProvider}: ${provider.shortName}`}
+                          title={text.reorderProvider}
+                          onDragStart={(event) => startProviderDrag(event, provider.id)}
+                          onDragEnd={finishProviderDrag}
+                        >
+                          ::
+                        </button>
 
-                      {provider.requiresApiKey ? (
-                        <div className="secret-field">
-                          <p className="secret-field__status">
-                            {apiKeyConfigured ? text.apiKeyConfigured : text.apiKeyNotConfigured}
-                          </p>
-                          <div className="secret-field__controls">
+                        <div className="provider-setting__body">
+                          <label className="toggle">
                             <input
-                              className="secret-field__input"
-                              type="password"
-                              autoComplete="off"
-                              aria-label={`${provider.shortName} ${text.enterApiKey}`}
-                              placeholder={text.enterApiKey}
-                              value={secretInputs[provider.id] ?? ''}
+                              type="checkbox"
+                              checked={checked}
                               disabled={saving}
-                              onChange={(event) => {
-                                const value = event.currentTarget.value;
-                                setSecretInputs((current) => ({
-                                  ...current,
-                                  [provider.id]: value,
-                                }));
-                              }}
+                              onChange={(event) => setProvider(provider.id, event.currentTarget.checked)}
                             />
-                            <button
-                              className="secret-field__button"
-                              type="button"
-                              disabled={saving}
-                              onClick={() => void saveApiKey(provider.id)}
-                            >
-                              {text.saveApiKey}
-                            </button>
-                          </div>
+                            <span className="toggle__visual" />
+                            <span>
+                              <strong>{provider.shortName}</strong>
+                              <em>{provider.credentialPath}</em>
+                            </span>
+                          </label>
+
+                          {provider.requiresApiKey ? (
+                            <div className="secret-field">
+                              <p className="secret-field__status">
+                                {apiKeyConfigured ? text.apiKeyConfigured : text.apiKeyNotConfigured}
+                              </p>
+                              <div className="secret-field__controls">
+                                <input
+                                  className="secret-field__input"
+                                  type="password"
+                                  autoComplete="off"
+                                  aria-label={`${provider.shortName} ${text.enterApiKey}`}
+                                  placeholder={text.enterApiKey}
+                                  value={secretInputs[provider.id] ?? ''}
+                                  disabled={saving}
+                                  onChange={(event) => {
+                                    const value = event.currentTarget.value;
+                                    setSecretInputs((current) => ({
+                                      ...current,
+                                      [provider.id]: value,
+                                    }));
+                                  }}
+                                />
+                                <button
+                                  className="secret-field__button"
+                                  type="button"
+                                  disabled={saving}
+                                  onClick={() => void saveApiKey(provider.id)}
+                                >
+                                  {text.saveApiKey}
+                                </button>
+                              </div>
+                            </div>
+                          ) : null}
                         </div>
-                      ) : null}
+                      </div>
                     </div>
                   );
                 })}
@@ -312,4 +391,36 @@ export default function SettingsApp() {
       </div>
     </main>
   );
+}
+
+function orderProviders(providerOrder: ProviderId[]): ProviderDefinition[] {
+  const rank = new Map(providerOrder.map((provider, index) => [provider, index]));
+  return [...PROVIDERS].sort((left, right) => {
+    const leftRank = rank.get(left.id) ?? Number.MAX_SAFE_INTEGER;
+    const rightRank = rank.get(right.id) ?? Number.MAX_SAFE_INTEGER;
+    return leftRank - rightRank;
+  });
+}
+
+function getDropPosition(event: DragEvent<HTMLDivElement>): DropPosition {
+  const rect = event.currentTarget.getBoundingClientRect();
+  return event.clientY >= rect.top + rect.height / 2 ? 'after' : 'before';
+}
+
+function moveProvider(
+  providerOrder: ProviderId[],
+  draggedProvider: ProviderId,
+  targetProvider: ProviderId,
+  position: DropPosition,
+): ProviderId[] {
+  const nextOrder = providerOrder.filter((provider) => provider !== draggedProvider);
+  const targetIndex = nextOrder.indexOf(targetProvider);
+  if (targetIndex < 0 || nextOrder.length === providerOrder.length) return providerOrder;
+
+  nextOrder.splice(position === 'after' ? targetIndex + 1 : targetIndex, 0, draggedProvider);
+  return nextOrder;
+}
+
+function sameProviderOrder(left: ProviderId[], right: ProviderId[]): boolean {
+  return left.length === right.length && left.every((provider, index) => provider === right[index]);
 }

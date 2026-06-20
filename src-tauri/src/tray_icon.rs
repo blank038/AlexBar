@@ -63,11 +63,8 @@ fn build_tooltip_from_reports(snapshots: &[ProviderSnapshot]) -> String {
 }
 
 fn select_meter_fractions(snapshots: &[ProviderSnapshot]) -> (Option<f64>, Option<f64>) {
-    for descriptor in providers::DESCRIPTORS {
-        if let Some(snapshot) = snapshots
-            .iter()
-            .find(|snapshot| snapshot.provider == descriptor.id && snapshot.note.is_none())
-        {
+    for snapshot in snapshots.iter().filter(|snapshot| snapshot.note.is_none()) {
+        if let Some(descriptor) = providers::find(&snapshot.provider) {
             let primary = find_quota_fraction(snapshot, descriptor.short_quota_key);
             let secondary = find_quota_fraction(snapshot, descriptor.long_quota_key);
             if primary.is_some() || secondary.is_some() {
@@ -143,6 +140,45 @@ mod tests {
         assert_eq!(
             select_meter_fractions(&[snapshot]),
             (Some(0.25), Some(0.75))
+        );
+    }
+
+    #[test]
+    fn selects_meter_fractions_from_first_snapshot_with_quota() {
+        let deepseek = ProviderSnapshot {
+            provider: "deepseek".to_owned(),
+            refreshed_at: 1,
+            account: None,
+            metrics: vec![ProviderMetric::from(Balance {
+                key: "deepseek.balance.CNY".to_owned(),
+                display_name: "CNY 余额".to_owned(),
+                amount: 110.0,
+                currency: "CNY".to_owned(),
+                granted: Some(10.0),
+                topped_up: Some(100.0),
+                is_available: true,
+                urgency: Urgency::Calm,
+            })],
+            note: None,
+        };
+        let claude = ProviderSnapshot {
+            provider: "anthropic".to_owned(),
+            refreshed_at: 1,
+            account: None,
+            metrics: vec![quota("claude.5h", 40.0), quota("claude.7d", 80.0)],
+            note: None,
+        };
+        let codex = ProviderSnapshot {
+            provider: "openai-codex".to_owned(),
+            refreshed_at: 1,
+            account: None,
+            metrics: vec![quota("codex.short", 20.0), quota("codex.long", 60.0)],
+            note: None,
+        };
+
+        assert_eq!(
+            select_meter_fractions(&[deepseek, claude, codex]),
+            (Some(0.4), Some(0.8))
         );
     }
 

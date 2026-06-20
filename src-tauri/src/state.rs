@@ -1,4 +1,7 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -26,10 +29,16 @@ fn default_visible_provider_limit() -> u32 {
     2
 }
 
+fn default_provider_order() -> Vec<String> {
+    providers::ids().map(ToOwned::to_owned).collect()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct AppSettings {
     pub enabled_providers: Vec<String>,
+    #[serde(default = "default_provider_order")]
+    pub provider_order: Vec<String>,
     pub refresh_interval_secs: u64,
     #[serde(default = "default_visible_provider_limit")]
     pub visible_provider_limit: u32,
@@ -41,6 +50,7 @@ impl Default for AppSettings {
     fn default() -> Self {
         Self {
             enabled_providers: providers::ids().map(ToOwned::to_owned).collect(),
+            provider_order: default_provider_order(),
             refresh_interval_secs: DEFAULT_REFRESH_INTERVAL_SECS,
             visible_provider_limit: default_visible_provider_limit(),
             locale: default_locale(),
@@ -53,6 +63,20 @@ impl AppSettings {
         for provider in &self.enabled_providers {
             if providers::find(provider).is_none() {
                 return Err(SettingsError::InvalidProvider {
+                    provider: provider.clone(),
+                });
+            }
+        }
+
+        let mut seen_order = HashSet::new();
+        for provider in &self.provider_order {
+            if providers::find(provider).is_none() {
+                return Err(SettingsError::InvalidProviderOrder {
+                    provider: provider.clone(),
+                });
+            }
+            if !seen_order.insert(provider.as_str()) {
+                return Err(SettingsError::DuplicateProviderOrder {
                     provider: provider.clone(),
                 });
             }
@@ -80,6 +104,22 @@ impl AppSettings {
         self.enabled_providers
             .iter()
             .any(|enabled| enabled == provider)
+    }
+
+    pub fn ordered_enabled_providers(&self) -> impl Iterator<Item = &str> {
+        self.provider_order
+            .iter()
+            .map(String::as_str)
+            .filter(|provider| self.is_enabled(provider))
+    }
+
+    fn normalize_provider_order(&mut self) {
+        let ordered = self.provider_order.iter().cloned().collect::<HashSet<_>>();
+        for provider in providers::ids() {
+            if !ordered.contains(provider) {
+                self.provider_order.push(provider.to_owned());
+            }
+        }
     }
 }
 
@@ -167,8 +207,9 @@ impl AppState {
 
     pub async fn update_settings(
         &self,
-        settings: AppSettings,
+        mut settings: AppSettings,
     ) -> Result<AppSettings, SettingsError> {
+        settings.normalize_provider_order();
         settings.validate()?;
         save_settings(&self.store, &settings)?;
         *self.settings.write().await = settings.clone();
@@ -214,6 +255,10 @@ pub enum StateError {
 pub enum SettingsError {
     #[error("settings contain unsupported provider {provider}")]
     InvalidProvider { provider: String },
+    #[error("settings contain unsupported provider order entry {provider}")]
+    InvalidProviderOrder { provider: String },
+    #[error("settings contain duplicate provider order entry {provider}")]
+    DuplicateProviderOrder { provider: String },
     #[error("settings contain unsupported refresh interval {value}")]
     InvalidRefreshInterval { value: u64 },
     #[error("settings contain unsupported visible provider limit {value}")]
@@ -231,7 +276,16 @@ pub enum SettingsError {
 fn load_settings(store: &Store) -> Result<AppSettings, SettingsError> {
     let settings = match store.get(SETTINGS_KEY) {
         Some(value) => {
-            serde_json::from_value::<AppSettings>(value).map_err(SettingsError::Decode)?
+            let should_save_legacy_order = value.get("providerOrder").is_none();
+            let mut settings =
+                serde_json::from_value::<AppSettings>(value).map_err(SettingsError::Decode)?;
+            let before_normalize = settings.clone();
+            settings.normalize_provider_order();
+            settings.validate()?;
+            if should_save_legacy_order || settings != before_normalize {
+                save_settings(store, &settings)?;
+            }
+            settings
         }
         None => {
             let settings = AppSettings::default();
@@ -239,7 +293,6 @@ fn load_settings(store: &Store) -> Result<AppSettings, SettingsError> {
             settings
         }
     };
-    settings.validate()?;
     Ok(settings)
 }
 
@@ -289,6 +342,12 @@ mod tests {
                 "deepseek".to_owned(),
                 "zai".to_owned(),
             ],
+            provider_order: vec![
+                "openai-codex".to_owned(),
+                "anthropic".to_owned(),
+                "deepseek".to_owned(),
+                "zai".to_owned(),
+            ],
             refresh_interval_secs: 30,
             visible_provider_limit: 2,
             locale: "zh-CN".to_owned(),
@@ -300,6 +359,12 @@ mod tests {
     fn rejects_unsupported_visible_provider_limit() {
         let settings = AppSettings {
             enabled_providers: vec!["openai-codex".to_owned()],
+            provider_order: vec![
+                "openai-codex".to_owned(),
+                "anthropic".to_owned(),
+                "deepseek".to_owned(),
+                "zai".to_owned(),
+            ],
             refresh_interval_secs: 60,
             visible_provider_limit: 0,
             locale: "zh-CN".to_owned(),
@@ -314,6 +379,12 @@ mod tests {
     fn rejects_unsupported_provider() {
         let settings = AppSettings {
             enabled_providers: vec!["gemini".to_owned()],
+            provider_order: vec![
+                "openai-codex".to_owned(),
+                "anthropic".to_owned(),
+                "deepseek".to_owned(),
+                "zai".to_owned(),
+            ],
             refresh_interval_secs: 60,
             visible_provider_limit: 2,
             locale: "zh-CN".to_owned(),
@@ -322,5 +393,89 @@ mod tests {
             settings.validate(),
             Err(SettingsError::InvalidProvider { .. })
         ));
+    }
+
+    #[test]
+    fn defaults_provider_order_when_settings_are_missing_it() {
+        let settings: AppSettings = serde_json::from_value(serde_json::json!({
+            "enabledProviders": ["openai-codex", "anthropic"],
+            "refreshIntervalSecs": 60,
+            "visibleProviderLimit": 2,
+            "locale": "zh-CN"
+        }))
+        .expect("legacy settings should decode");
+
+        assert_eq!(
+            settings.provider_order,
+            vec![
+                "openai-codex".to_owned(),
+                "anthropic".to_owned(),
+                "deepseek".to_owned(),
+                "zai".to_owned(),
+            ]
+        );
+    }
+
+    #[test]
+    fn rejects_duplicate_provider_order_entries() {
+        let settings = AppSettings {
+            enabled_providers: vec!["openai-codex".to_owned()],
+            provider_order: vec![
+                "openai-codex".to_owned(),
+                "openai-codex".to_owned(),
+                "deepseek".to_owned(),
+                "zai".to_owned(),
+            ],
+            refresh_interval_secs: 60,
+            visible_provider_limit: 2,
+            locale: "zh-CN".to_owned(),
+        };
+
+        assert!(matches!(
+            settings.validate(),
+            Err(SettingsError::DuplicateProviderOrder { .. })
+        ));
+    }
+
+    #[test]
+    fn rejects_unsupported_provider_order_entries() {
+        let settings = AppSettings {
+            enabled_providers: vec!["openai-codex".to_owned()],
+            provider_order: vec![
+                "openai-codex".to_owned(),
+                "anthropic".to_owned(),
+                "gemini".to_owned(),
+                "zai".to_owned(),
+            ],
+            refresh_interval_secs: 60,
+            visible_provider_limit: 2,
+            locale: "zh-CN".to_owned(),
+        };
+
+        assert!(matches!(
+            settings.validate(),
+            Err(SettingsError::InvalidProviderOrder { .. })
+        ));
+    }
+
+    #[test]
+    fn ordered_enabled_providers_follow_saved_order() {
+        let settings = AppSettings {
+            enabled_providers: vec!["openai-codex".to_owned(), "zai".to_owned()],
+            provider_order: vec![
+                "zai".to_owned(),
+                "deepseek".to_owned(),
+                "anthropic".to_owned(),
+                "openai-codex".to_owned(),
+            ],
+            refresh_interval_secs: 60,
+            visible_provider_limit: 2,
+            locale: "zh-CN".to_owned(),
+        };
+
+        assert_eq!(
+            settings.ordered_enabled_providers().collect::<Vec<_>>(),
+            vec!["zai", "openai-codex"]
+        );
     }
 }

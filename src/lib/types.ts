@@ -58,6 +58,7 @@ export type Progress =
 
 export interface AppSettings {
   enabledProviders: ProviderId[];
+  providerOrder: ProviderId[];
   refreshIntervalSecs: 30 | 60 | 120 | 300;
   visibleProviderLimit: number;
   locale: Locale;
