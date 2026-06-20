@@ -525,6 +525,12 @@ h1 {
   position: relative;
   display: grid;
   gap: 8px;
+  cursor: grab;
+  touch-action: none;
+}
+
+.provider-setting:active {
+  cursor: grabbing;
 }
 
 .provider-setting::before,

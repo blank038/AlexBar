@@ -1,5 +1,5 @@
 import { disable, enable, isEnabled } from '@tauri-apps/plugin-autostart';
-import { type DragEvent, useEffect, useMemo, useState } from 'react';
+import { type PointerEvent, useEffect, useMemo, useRef, useState } from 'react';
 import * as api from './lib/api';
 import { getText, LOCALES } from './lib/i18n';
 import type { AppSettings, ProviderDefinition, ProviderId } from './lib/types';
@@ -19,10 +19,19 @@ const INTERVALS: AppSettings['refreshIntervalSecs'][] = [30, 60, 120, 300];
 const VISIBLE_PROVIDER_LIMITS = [1, 2, 3, 4, 5, 6, 7, 8] as const;
 type SettingsCategory = 'provider' | 'system';
 type DropPosition = 'before' | 'after';
+const PROVIDER_DRAG_THRESHOLD_PX = 6;
 
 interface ProviderDropTarget {
   provider: ProviderId;
   position: DropPosition;
+}
+
+interface ProviderDragState {
+  provider: ProviderId;
+  pointerId: number;
+  startX: number;
+  startY: number;
+  active: boolean;
 }
 
 export default function SettingsApp() {
@@ -35,10 +44,14 @@ export default function SettingsApp() {
   const [appError, setAppError] = useState<string | null>(null);
   const [draggedProvider, setDraggedProvider] = useState<ProviderId | null>(null);
   const [dropTarget, setDropTarget] = useState<ProviderDropTarget | null>(null);
+  const [draftProviderOrder, setDraftProviderOrder] = useState<ProviderId[] | null>(null);
+  const dragStateRef = useRef<ProviderDragState | null>(null);
+  const draftProviderOrderRef = useRef<ProviderId[] | null>(null);
   const text = getText(settings.locale);
+  const providerOrder = draftProviderOrder ?? settings.providerOrder;
   const orderedProviders = useMemo(
-    () => orderProviders(settings.providerOrder),
-    [settings.providerOrder],
+    () => orderProviders(providerOrder),
+    [providerOrder],
   );
   const providerCategoryClass =
     activeCategory === 'provider'
@@ -115,40 +128,83 @@ export default function SettingsApp() {
     void persistSettings({ ...settings, enabledProviders });
   }
 
-  function startProviderDrag(event: DragEvent<HTMLButtonElement>, provider: ProviderId) {
-    setDraggedProvider(provider);
-    event.dataTransfer.effectAllowed = 'move';
-    event.dataTransfer.setData('text/plain', provider);
+  function startProviderDrag(event: PointerEvent<HTMLDivElement>, provider: ProviderId) {
+    if (saving || isBlockedDragTarget(event.target)) return;
+    if (event.pointerType === 'mouse' && event.button !== 0) return;
+
+    dragStateRef.current = {
+      provider,
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      active: false,
+    };
+    event.currentTarget.setPointerCapture(event.pointerId);
   }
 
-  function handleProviderDragOver(event: DragEvent<HTMLDivElement>, provider: ProviderId) {
-    if (!draggedProvider || draggedProvider === provider || saving) return;
+  function moveProviderDrag(event: PointerEvent<HTMLDivElement>) {
+    const dragState = dragStateRef.current;
+    if (!dragState || dragState.pointerId !== event.pointerId || saving) return;
+
+    if (!dragState.active) {
+      const moved =
+        Math.abs(event.clientX - dragState.startX) >= PROVIDER_DRAG_THRESHOLD_PX
+        || Math.abs(event.clientY - dragState.startY) >= PROVIDER_DRAG_THRESHOLD_PX;
+      if (!moved) return;
+
+      dragState.active = true;
+      const initialOrder = draftProviderOrderRef.current ?? settings.providerOrder;
+      draftProviderOrderRef.current = initialOrder;
+      setDraftProviderOrder(initialOrder);
+      setDraggedProvider(dragState.provider);
+    }
 
     event.preventDefault();
-    event.dataTransfer.dropEffect = 'move';
-    setDropTarget({ provider, position: getDropPosition(event) });
+    const target = providerTargetFromPoint(event.clientX, event.clientY);
+    if (!target || target.provider === dragState.provider) {
+      setDropTarget(null);
+      return;
+    }
+
+    const position = getDropPosition(event.clientY, target.element);
+    setDropTarget({ provider: target.provider, position });
+    setDraftProviderOrder((current) => {
+      const currentOrder = current ?? settings.providerOrder;
+      const nextOrder = moveProvider(currentOrder, dragState.provider, target.provider, position);
+      draftProviderOrderRef.current = nextOrder;
+      return sameProviderOrder(nextOrder, currentOrder) ? currentOrder : nextOrder;
+    });
   }
 
-  function dropProvider(event: DragEvent<HTMLDivElement>, targetProvider: ProviderId) {
-    event.preventDefault();
-    const dragged = draggedProvider ?? event.dataTransfer.getData('text/plain');
-    finishProviderDrag();
-    if (!dragged || dragged === targetProvider || saving) return;
+  function finishProviderDrag(event: PointerEvent<HTMLDivElement>) {
+    const dragState = dragStateRef.current;
+    if (!dragState || dragState.pointerId !== event.pointerId) return;
 
-    const providerOrder = moveProvider(
-      settings.providerOrder,
-      dragged,
-      targetProvider,
-      getDropPosition(event),
-    );
-    if (sameProviderOrder(providerOrder, settings.providerOrder)) return;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
 
-    void persistSettings({ ...settings, providerOrder });
-  }
-
-  function finishProviderDrag() {
+    const finalOrder = draftProviderOrderRef.current;
+    dragStateRef.current = null;
+    draftProviderOrderRef.current = null;
     setDraggedProvider(null);
     setDropTarget(null);
+    setDraftProviderOrder(null);
+
+    if (dragState.active && finalOrder && !sameProviderOrder(finalOrder, settings.providerOrder)) {
+      void persistSettings({ ...settings, providerOrder: finalOrder });
+    }
+  }
+
+  function cancelProviderDrag(event: PointerEvent<HTMLDivElement>) {
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    dragStateRef.current = null;
+    draftProviderOrderRef.current = null;
+    setDraggedProvider(null);
+    setDropTarget(null);
+    setDraftProviderOrder(null);
   }
 
   async function saveApiKey(provider: ProviderId) {
@@ -244,19 +300,20 @@ export default function SettingsApp() {
                     <div
                       className={providerSettingClass}
                       key={provider.id}
-                      onDragOver={(event) => handleProviderDragOver(event, provider.id)}
-                      onDrop={(event) => dropProvider(event, provider.id)}
+                      data-provider-id={provider.id}
+                      aria-grabbed={draggedProvider === provider.id ? true : undefined}
+                      onPointerDown={(event) => startProviderDrag(event, provider.id)}
+                      onPointerMove={moveProviderDrag}
+                      onPointerUp={finishProviderDrag}
+                      onPointerCancel={cancelProviderDrag}
                     >
                       <div className="provider-setting__row">
                         <button
                           className="provider-setting__drag-handle"
                           type="button"
-                          draggable={!saving}
                           disabled={saving}
                           aria-label={`${text.reorderProvider}: ${provider.shortName}`}
                           title={text.reorderProvider}
-                          onDragStart={(event) => startProviderDrag(event, provider.id)}
-                          onDragEnd={finishProviderDrag}
                         >
                           ::
                         </button>
@@ -402,9 +459,15 @@ function orderProviders(providerOrder: ProviderId[]): ProviderDefinition[] {
   });
 }
 
-function getDropPosition(event: DragEvent<HTMLDivElement>): DropPosition {
-  const rect = event.currentTarget.getBoundingClientRect();
-  return event.clientY >= rect.top + rect.height / 2 ? 'after' : 'before';
+function getDropPosition(pointerY: number, element: HTMLElement): DropPosition {
+  const rect = element.getBoundingClientRect();
+  return pointerY >= rect.top + rect.height / 2 ? 'after' : 'before';
+}
+
+function providerTargetFromPoint(x: number, y: number): { provider: ProviderId; element: HTMLElement } | null {
+  const element = document.elementFromPoint(x, y)?.closest<HTMLElement>('[data-provider-id]');
+  const provider = element?.dataset.providerId;
+  return element && provider ? { provider, element } : null;
 }
 
 function moveProvider(
@@ -423,4 +486,8 @@ function moveProvider(
 
 function sameProviderOrder(left: ProviderId[], right: ProviderId[]): boolean {
   return left.length === right.length && left.every((provider, index) => provider === right[index]);
+}
+
+function isBlockedDragTarget(target: EventTarget): boolean {
+  return target instanceof HTMLElement && Boolean(target.closest('input, .secret-field__button'));
 }
