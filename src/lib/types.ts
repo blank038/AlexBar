@@ -115,4 +115,20 @@ export const PROVIDERS: ProviderDefinition[] = [
     accent: '#7c5cff',
     requiresApiKey: true,
   },
+  {
+    id: 'minimax',
+    name: 'MiniMax Token Plan',
+    shortName: 'MiniMax',
+    credentialPath: 'AlexBar secrets.json',
+    accent: '#f59e0b',
+    requiresApiKey: true,
+  },
+  {
+    id: 'kimi',
+    name: 'Kimi API Balance',
+    shortName: 'Kimi',
+    credentialPath: 'AlexBar secrets.json',
+    accent: '#22d3ee',
+    requiresApiKey: true,
+  },
 ];

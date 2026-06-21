@@ -19,6 +19,8 @@ pub static DESCRIPTORS: &[&ProviderDescriptor] = &[
     &usage::claude::DESCRIPTOR,
     &usage::deepseek::DESCRIPTOR,
     &usage::zai::DESCRIPTOR,
+    &usage::minimax::DESCRIPTOR,
+    &usage::kimi::DESCRIPTOR,
 ];
 
 pub fn find(id: &str) -> Option<&'static ProviderDescriptor> {
@@ -42,6 +44,8 @@ mod tests {
         assert!(find("anthropic").is_some());
         assert!(find("deepseek").is_some());
         assert!(find("zai").is_some());
+        assert!(find("minimax").is_some());
+        assert!(find("kimi").is_some());
         assert!(find("gemini").is_none());
     }
 
@@ -49,7 +53,14 @@ mod tests {
     fn ids_follow_descriptor_order() {
         assert_eq!(
             ids().collect::<Vec<_>>(),
-            ["openai-codex", "anthropic", "deepseek", "zai"]
+            [
+                "openai-codex",
+                "anthropic",
+                "deepseek",
+                "zai",
+                "minimax",
+                "kimi"
+            ]
         );
     }
 }
