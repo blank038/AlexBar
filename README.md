@@ -9,7 +9,7 @@ AlexBar 是一个放在系统托盘里的订阅用量查看工具。它用来集
 ## 主要功能
 
 - 在托盘中快速打开用量面板。
-- 查看 Codex、Claude、z.ai 等服务的订阅或用量状态。
+- 查看 Codex、Claude、DeepSeek、z.ai、MiniMax、Kimi 等服务的订阅或用量状态。
 - 显示已用额度、剩余额度和重置时间。
 - 支持手动刷新全部服务，也可以单独刷新某个服务。
 - 可设置自动刷新间隔。
@@ -31,7 +31,10 @@ AlexBar 是一个放在系统托盘里的订阅用量查看工具。它用来集
 | --- | --- |
 | Codex | 读取本机已有登录信息，用于查看 Codex Plus 或 Pro 的用量情况。 |
 | Claude | 读取本机已有登录信息，用于查看 Claude Pro 或 Max 的用量情况；access token 过期时会使用本机 refresh token 自动续期。 |
+| DeepSeek | 需要在设置中填写 API key，用于查看 DeepSeek API 余额。 |
 | z.ai | 需要在设置中填写 API key，用于查看 z.ai Coding Plan 的用量情况。 |
+| MiniMax | 需要在设置中填写 API key，用于查看 MiniMax Token Plan 剩余额度。 |
+| Kimi | 需要在设置中填写 API key，用于查看 Kimi API 余额。 |
 
 ## 数据与隐私
 

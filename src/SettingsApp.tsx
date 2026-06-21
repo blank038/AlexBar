@@ -17,7 +17,7 @@ const DEFAULT_SETTINGS: AppSettings = {
 
 const INTERVALS: AppSettings['refreshIntervalSecs'][] = [30, 60, 120, 300];
 const VISIBLE_PROVIDER_LIMITS = [1, 2, 3, 4, 5, 6, 7, 8] as const;
-type SettingsCategory = 'provider' | 'system';
+type SettingsCategory = 'general' | 'appearance' | 'provider' | 'system';
 type DropPosition = 'before' | 'after';
 const PROVIDER_DRAG_THRESHOLD_PX = 6;
 
@@ -43,7 +43,7 @@ export default function SettingsApp() {
   const [updateError, setUpdateError] = useState<string | null>(null);
   const [secretStatus, setSecretStatus] = useState<Record<ProviderId, boolean>>({});
   const [secretInputs, setSecretInputs] = useState<Record<ProviderId, string>>({});
-  const [activeCategory, setActiveCategory] = useState<SettingsCategory>('provider');
+  const [activeCategory, setActiveCategory] = useState<SettingsCategory>('general');
   const [appError, setAppError] = useState<string | null>(null);
   const [draggedProvider, setDraggedProvider] = useState<ProviderId | null>(null);
   const [dropTarget, setDropTarget] = useState<ProviderDropTarget | null>(null);
@@ -56,15 +56,7 @@ export default function SettingsApp() {
     () => orderProviders(providerOrder),
     [providerOrder],
   );
-  const providerCategoryClass =
-    activeCategory === 'provider'
-      ? 'settings-window__category settings-window__category--active'
-      : 'settings-window__category';
-  const systemCategoryClass =
-    activeCategory === 'system'
-      ? 'settings-window__category settings-window__category--active'
-      : 'settings-window__category';
-  const activeCategoryLabel = activeCategory === 'provider' ? text.categoryProvider : text.categorySystem;
+  const activeCategoryLabel = categoryLabel(activeCategory, text);
 
   useEffect(() => {
     let disposed = false;
@@ -286,7 +278,25 @@ export default function SettingsApp() {
       <div className="settings-window__body">
         <nav className="settings-window__nav" aria-label={text.settings} role="tablist">
           <button
-            className={providerCategoryClass}
+            className={categoryClass(activeCategory, 'general')}
+            type="button"
+            role="tab"
+            aria-selected={activeCategory === 'general'}
+            onClick={() => setActiveCategory('general')}
+          >
+            {text.categoryGeneral}
+          </button>
+          <button
+            className={categoryClass(activeCategory, 'appearance')}
+            type="button"
+            role="tab"
+            aria-selected={activeCategory === 'appearance'}
+            onClick={() => setActiveCategory('appearance')}
+          >
+            {text.categoryAppearance}
+          </button>
+          <button
+            className={categoryClass(activeCategory, 'provider')}
             type="button"
             role="tab"
             aria-selected={activeCategory === 'provider'}
@@ -295,7 +305,7 @@ export default function SettingsApp() {
             {text.categoryProvider}
           </button>
           <button
-            className={systemCategoryClass}
+            className={categoryClass(activeCategory, 'system')}
             type="button"
             role="tab"
             aria-selected={activeCategory === 'system'}
@@ -306,7 +316,45 @@ export default function SettingsApp() {
         </nav>
 
         <section className="settings-window__content" role="tabpanel" aria-label={activeCategoryLabel}>
-          {activeCategory === 'provider' ? (
+          {activeCategory === 'general' ? (
+            <>
+              <div className="settings-window__group">
+                <p className="settings-window__label">{text.refreshInterval}</p>
+                <div className="intervals">
+                  {INTERVALS.map((interval) => (
+                    <button
+                      key={interval}
+                      className={settings.refreshIntervalSecs === interval ? 'interval interval--active' : 'interval'}
+                      type="button"
+                      disabled={saving}
+                      onClick={() => void persistSettings({ ...settings, refreshIntervalSecs: interval })}
+                    >
+                      {interval}s
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </>
+          ) : activeCategory === 'appearance' ? (
+            <>
+              <div className="settings-window__group">
+                <p className="settings-window__label">{text.visibleProviderLimit}</p>
+                <div className="intervals">
+                  {VISIBLE_PROVIDER_LIMITS.map((limit) => (
+                    <button
+                      key={limit}
+                      className={settings.visibleProviderLimit === limit ? 'interval interval--active' : 'interval'}
+                      type="button"
+                      disabled={saving}
+                      onClick={() => void persistSettings({ ...settings, visibleProviderLimit: limit })}
+                    >
+                      {limit}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </>
+          ) : activeCategory === 'provider' ? (
             <>
               <div className="settings-window__group">
                 <p className="settings-window__label">{text.providers}</p>
@@ -397,40 +445,6 @@ export default function SettingsApp() {
                   );
                 })}
               </div>
-
-              <div className="settings-window__group">
-                <p className="settings-window__label">{text.refreshInterval}</p>
-                <div className="intervals">
-                  {INTERVALS.map((interval) => (
-                    <button
-                      key={interval}
-                      className={settings.refreshIntervalSecs === interval ? 'interval interval--active' : 'interval'}
-                      type="button"
-                      disabled={saving}
-                      onClick={() => void persistSettings({ ...settings, refreshIntervalSecs: interval })}
-                    >
-                      {interval}s
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <div className="settings-window__group">
-                <p className="settings-window__label">{text.visibleProviderLimit}</p>
-                <div className="intervals">
-                  {VISIBLE_PROVIDER_LIMITS.map((limit) => (
-                    <button
-                      key={limit}
-                      className={settings.visibleProviderLimit === limit ? 'interval interval--active' : 'interval'}
-                      type="button"
-                      disabled={saving}
-                      onClick={() => void persistSettings({ ...settings, visibleProviderLimit: limit })}
-                    >
-                      {limit}
-                    </button>
-                  ))}
-                </div>
-              </div>
             </>
           ) : (
             <>
@@ -503,6 +517,25 @@ export default function SettingsApp() {
       </div>
     </main>
   );
+}
+
+function categoryClass(activeCategory: SettingsCategory, category: SettingsCategory): string {
+  return activeCategory === category
+    ? 'settings-window__category settings-window__category--active'
+    : 'settings-window__category';
+}
+
+function categoryLabel(category: SettingsCategory, text: Text): string {
+  switch (category) {
+    case 'general':
+      return text.categoryGeneral;
+    case 'appearance':
+      return text.categoryAppearance;
+    case 'provider':
+      return text.categoryProvider;
+    case 'system':
+      return text.categorySystem;
+  }
 }
 
 function orderProviders(providerOrder: ProviderId[]): ProviderDefinition[] {

@@ -1,6 +1,8 @@
 pub mod claude;
 pub mod codex;
 pub mod deepseek;
+pub mod kimi;
+pub mod minimax;
 pub mod zai;
 
 use std::sync::atomic::{AtomicI64, Ordering};

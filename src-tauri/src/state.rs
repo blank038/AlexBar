@@ -341,12 +341,16 @@ mod tests {
                 "anthropic".to_owned(),
                 "deepseek".to_owned(),
                 "zai".to_owned(),
+                "minimax".to_owned(),
+                "kimi".to_owned(),
             ],
             provider_order: vec![
                 "openai-codex".to_owned(),
                 "anthropic".to_owned(),
                 "deepseek".to_owned(),
                 "zai".to_owned(),
+                "minimax".to_owned(),
+                "kimi".to_owned(),
             ],
             refresh_interval_secs: 30,
             visible_provider_limit: 2,
@@ -364,6 +368,8 @@ mod tests {
                 "anthropic".to_owned(),
                 "deepseek".to_owned(),
                 "zai".to_owned(),
+                "minimax".to_owned(),
+                "kimi".to_owned(),
             ],
             refresh_interval_secs: 60,
             visible_provider_limit: 0,
@@ -384,6 +390,8 @@ mod tests {
                 "anthropic".to_owned(),
                 "deepseek".to_owned(),
                 "zai".to_owned(),
+                "minimax".to_owned(),
+                "kimi".to_owned(),
             ],
             refresh_interval_secs: 60,
             visible_provider_limit: 2,
@@ -412,6 +420,8 @@ mod tests {
                 "anthropic".to_owned(),
                 "deepseek".to_owned(),
                 "zai".to_owned(),
+                "minimax".to_owned(),
+                "kimi".to_owned(),
             ]
         );
     }
