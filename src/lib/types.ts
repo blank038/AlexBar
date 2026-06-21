@@ -64,6 +64,15 @@ export interface AppSettings {
   locale: Locale;
 }
 
+export interface UpdateCheck {
+  currentVersion: string;
+  latestVersion: string | null;
+  available: boolean;
+  releaseUrl: string | null;
+  publishedAt: string | null;
+  releaseNotes: string | null;
+}
+
 export interface ProviderDefinition {
   id: ProviderId;
   name: string;

@@ -5,11 +5,12 @@ mod refresh;
 mod state;
 mod tray;
 mod tray_icon;
+mod updates;
 mod usage;
 mod window;
 
 use state::AppState;
-use tauri::Manager;
+use tauri::{Manager, WebviewWindowBuilder};
 
 fn autostart_plugin<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<R> {
     let builder = tauri_plugin_autostart::Builder::new();
@@ -29,6 +30,9 @@ pub fn run() {
 
             let state = AppState::load(app)?;
             app.manage(state);
+            for window_config in &app.config().app.windows {
+                WebviewWindowBuilder::from_config(app.handle(), window_config)?.build()?;
+            }
             if let Some(main_window) = app.get_webview_window("main") {
                 window::apply_platform_chrome(&main_window);
             }
@@ -59,6 +63,8 @@ pub fn run() {
             commands::get_provider_secret_status,
             commands::set_popover_height,
             commands::open_settings_window,
+            commands::check_for_update,
+            commands::open_update_release_page,
         ])
         .run(tauri::generate_context!())
         .expect("failed to run AlexBar");

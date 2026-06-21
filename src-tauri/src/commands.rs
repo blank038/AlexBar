@@ -3,6 +3,7 @@ use tauri::{AppHandle, Emitter, State};
 use crate::{
     refresh,
     state::{AppSettings, AppState},
+    updates,
     usage::ProviderSnapshot,
     window,
 };
@@ -35,6 +36,18 @@ pub async fn set_popover_height(height: u32, app: AppHandle) -> Result<(), Strin
 pub async fn open_settings_window(app: AppHandle) -> Result<(), String> {
     window::open_settings_window(&app);
     Ok(())
+}
+
+#[tauri::command]
+pub async fn check_for_update(app: AppHandle) -> Result<updates::UpdateCheck, String> {
+    updates::check_for_update(&app)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn open_update_release_page() -> Result<(), String> {
+    updates::open_release_page().map_err(|error| error.to_string())
 }
 
 #[tauri::command]

@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
-import type { AppSettings, ProviderId, ProviderSnapshot } from './types';
+import type { AppSettings, ProviderId, ProviderSnapshot, UpdateCheck } from './types';
 
 export function getReports(): Promise<ProviderSnapshot[]> {
   return invoke<ProviderSnapshot[]>('get_reports');
@@ -35,4 +35,12 @@ export function setPopoverHeight(height: number): Promise<void> {
 
 export function openSettingsWindow(): Promise<void> {
   return invoke<void>('open_settings_window');
+}
+
+export function checkForUpdate(): Promise<UpdateCheck> {
+  return invoke<UpdateCheck>('check_for_update');
+}
+
+export function openUpdateReleasePage(): Promise<void> {
+  return invoke<void>('open_update_release_page');
 }

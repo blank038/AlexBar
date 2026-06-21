@@ -13,6 +13,7 @@
     "windows": [
       {
         "label": "main",
+        "create": false,
         "title": "AlexBar",
         "width": 320,
         "height": 360,
@@ -25,6 +26,7 @@
       },
       {
         "label": "settings",
+        "create": false,
         "title": "Settings",
         "width": 600,
         "height": 540,

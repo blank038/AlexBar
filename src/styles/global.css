@@ -525,12 +525,6 @@ h1 {
   position: relative;
   display: grid;
   gap: 8px;
-  cursor: grab;
-  touch-action: none;
-}
-
-.provider-setting:active {
-  cursor: grabbing;
 }
 
 .provider-setting::before,
@@ -583,6 +577,7 @@ h1 {
   padding: 0;
   color: rgba(247, 243, 234, 0.6);
   cursor: grab;
+  touch-action: none;
   font-size: 12px;
   font-weight: 900;
 }
@@ -635,6 +630,64 @@ h1 {
   padding: 0;
   font-size: 11px;
   font-weight: 900;
+}
+
+.update-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 210px;
+  gap: 12px;
+  align-items: center;
+}
+
+.update-card__summary {
+  min-width: 0;
+}
+
+.update-card__summary strong,
+.update-card__summary em {
+  display: block;
+}
+
+.update-card__summary strong {
+  margin-top: 6px;
+  font-size: 13px;
+}
+
+.update-card__summary em {
+  margin-top: 3px;
+  overflow: hidden;
+  color: rgba(247, 243, 234, 0.48);
+  font-size: 10px;
+  font-style: normal;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.update-card__actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+}
+
+.update-card__actions:has(:only-child) {
+  grid-template-columns: 1fr;
+}
+
+.update-card__button {
+  min-width: 0;
+  padding: 0 10px;
+}
+
+.update-card__button--primary {
+  border-color: rgba(200, 255, 95, 0.82);
+  color: #10110f;
+  background: #c8ff5f;
+}
+
+.update-card__error {
+  color: #ffd8cf;
+  font-size: 10px;
+  line-height: 1.35;
 }
 
 .intervals,

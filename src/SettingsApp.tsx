@@ -1,8 +1,8 @@
 import { disable, enable, isEnabled } from '@tauri-apps/plugin-autostart';
 import { type PointerEvent, useEffect, useMemo, useRef, useState } from 'react';
 import * as api from './lib/api';
-import { getText, LOCALES } from './lib/i18n';
-import type { AppSettings, ProviderDefinition, ProviderId } from './lib/types';
+import { getText, LOCALES, type Text } from './lib/i18n';
+import type { AppSettings, ProviderDefinition, ProviderId, UpdateCheck } from './lib/types';
 import { PROVIDERS } from './lib/types';
 
 
@@ -38,6 +38,9 @@ export default function SettingsApp() {
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
   const [saving, setSaving] = useState(false);
   const [autostartEnabled, setAutostartEnabled] = useState<boolean | null>(null);
+  const [updateCheck, setUpdateCheck] = useState<UpdateCheck | null>(null);
+  const [checkingUpdate, setCheckingUpdate] = useState(false);
+  const [updateError, setUpdateError] = useState<string | null>(null);
   const [secretStatus, setSecretStatus] = useState<Record<ProviderId, boolean>>({});
   const [secretInputs, setSecretInputs] = useState<Record<ProviderId, string>>({});
   const [activeCategory, setActiveCategory] = useState<SettingsCategory>('provider');
@@ -93,6 +96,7 @@ export default function SettingsApp() {
     }
 
     void boot();
+    void checkLatestUpdate();
 
     return () => {
       disposed = true;
@@ -129,7 +133,7 @@ export default function SettingsApp() {
   }
 
   function startProviderDrag(event: PointerEvent<HTMLDivElement>, provider: ProviderId) {
-    if (saving || isBlockedDragTarget(event.target)) return;
+    if (saving || !isProviderDragHandle(event.target)) return;
     if (event.pointerType === 'mouse' && event.button !== 0) return;
 
     dragStateRef.current = {
@@ -241,6 +245,27 @@ export default function SettingsApp() {
       setAutostartEnabled(previousAutostartEnabled);
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function checkLatestUpdate() {
+    setCheckingUpdate(true);
+    setUpdateError(null);
+    try {
+      setUpdateCheck(await api.checkForUpdate());
+    } catch (error) {
+      setUpdateError(String(error));
+    } finally {
+      setCheckingUpdate(false);
+    }
+  }
+
+  async function openUpdateReleasePage() {
+    setUpdateError(null);
+    try {
+      await api.openUpdateReleasePage();
+    } catch (error) {
+      setUpdateError(String(error));
     }
   }
 
@@ -442,6 +467,36 @@ export default function SettingsApp() {
                   ))}
                 </div>
               </div>
+
+              <div className="settings-window__group">
+                <div className="update-card">
+                  <div className="update-card__summary">
+                    <p className="settings-window__label">{text.softwareUpdate}</p>
+                    <strong>{updateStatusTitle(updateCheck, checkingUpdate, updateError, text)}</strong>
+                    <em>{updateStatusHint(updateCheck, text)}</em>
+                  </div>
+                  <div className="update-card__actions">
+                    <button
+                      className="secret-field__button update-card__button"
+                      type="button"
+                      disabled={checkingUpdate}
+                      onClick={() => void checkLatestUpdate()}
+                    >
+                      {checkingUpdate ? text.checkingUpdate : text.checkForUpdate}
+                    </button>
+                    {updateCheck?.available ? (
+                      <button
+                        className="secret-field__button update-card__button update-card__button--primary"
+                        type="button"
+                        onClick={() => void openUpdateReleasePage()}
+                      >
+                        {text.openReleasePage}
+                      </button>
+                    ) : null}
+                  </div>
+                </div>
+                {updateError ? <p className="update-card__error">{updateError}</p> : null}
+              </div>
             </>
           )}
         </section>
@@ -488,6 +543,31 @@ function sameProviderOrder(left: ProviderId[], right: ProviderId[]): boolean {
   return left.length === right.length && left.every((provider, index) => provider === right[index]);
 }
 
-function isBlockedDragTarget(target: EventTarget): boolean {
-  return target instanceof HTMLElement && Boolean(target.closest('input, .secret-field__button'));
+function updateStatusTitle(
+  updateCheck: UpdateCheck | null,
+  checkingUpdate: boolean,
+  updateError: string | null,
+  text: Text,
+): string {
+  if (checkingUpdate) return text.updateChecking;
+  if (updateError) return text.updateCheckFailed;
+  if (!updateCheck) return text.updateUnknown;
+  if (!updateCheck.latestVersion) return text.updateNoRelease;
+  if (updateCheck.available) return `${text.updateAvailable} ${formatVersion(updateCheck.latestVersion)}`;
+  return text.updateUnavailable;
+}
+
+function updateStatusHint(updateCheck: UpdateCheck | null, text: Text): string {
+  if (!updateCheck) return '';
+  const current = `${text.currentVersion} ${formatVersion(updateCheck.currentVersion)}`;
+  if (!updateCheck.latestVersion) return current;
+  return `${current} / ${text.latestVersion} ${formatVersion(updateCheck.latestVersion)}`;
+}
+
+function formatVersion(version: string): string {
+  return version.startsWith('v') || version.startsWith('V') ? version : `v${version}`;
+}
+
+function isProviderDragHandle(target: EventTarget): boolean {
+  return target instanceof HTMLElement && Boolean(target.closest('.provider-setting__drag-handle'));
 }

@@ -142,7 +142,7 @@ impl AppState {
         let secrets = app.store(SECRETS_STORE).map_err(SettingsError::Store)?;
         let client = reqwest::Client::builder()
             .https_only(true)
-            .user_agent("AlexBar/0.1.0")
+            .user_agent(concat!("AlexBar/", env!("CARGO_PKG_VERSION")))
             .build()
             .map_err(StateError::HttpClient)?;
         let quota_gates = providers::ids()
